@@ -53,7 +53,7 @@ class LocalSpeedClean(BaseCleaningAlgorithm):
         data_manager = DataManager('idf', data_path)
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=data_manager.clean_data.columns)
 
         # 计算清洗前数据的平均绝对误差
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data, data_manager.observed_data)
@@ -62,7 +62,7 @@ class LocalSpeedClean(BaseCleaningAlgorithm):
 
         # 使用 ColConstraintMiner 从 clean_data 中挖掘列约束
         miner = ColConstraintMiner(data_manager.clean_data)
-        speed_constraints = miner.mine_constraints()[0]  # 获取速度约束
+        speed_constraints = miner.mine_col_constraints()[0]  # 获取速度约束
 
         # 创建LocalSpeedClean实例并清洗数据，传递speed_constraints参数
         localspeedclean = LocalSpeedClean()
@@ -143,7 +143,7 @@ class GlobalSpeedClean(BaseCleaningAlgorithm):
         data_manager = DataManager('idf', data_path)
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=data_manager.clean_data.columns)
 
         # 计算清洗前数据的平均绝对误差
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data, data_manager.observed_data)
@@ -152,7 +152,7 @@ class GlobalSpeedClean(BaseCleaningAlgorithm):
 
         # 使用 ColConstraintMiner 从 clean_data 中挖掘列约束
         miner = ColConstraintMiner(data_manager.clean_data)
-        speed_constraints = miner.mine_constraints()[0]  # 获取速度约束
+        speed_constraints = miner.mine_col_constraints()[0]  # 获取速度约束
 
         # 创建GlobalSpeedClean实例并清洗数据，传递speed_constraints参数
         globalspeedclean = GlobalSpeedClean()
@@ -219,7 +219,7 @@ class LocalSpeedAccelClean(BaseCleaningAlgorithm):
         data_manager = DataManager('idf', data_path)
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=data_manager.clean_data.columns)
 
         # 计算清洗前数据的平均绝对误差
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
@@ -228,7 +228,7 @@ class LocalSpeedAccelClean(BaseCleaningAlgorithm):
 
         # 使用 ColConstraintMiner 从 clean_data 中挖掘列约束
         miner = ColConstraintMiner(data_manager.clean_data)
-        speed_constraints, accel_constraints = miner.mine_constraints()  # 获取速度和加速度约束
+        speed_constraints, accel_constraints = miner.mine_col_constraints()  # 获取速度和加速度约束
 
         # 创建LocalSpeedAccelClean实例并清洗数据，传递速度和加速度约束参数
         localspeedaccelclean = LocalSpeedAccelClean()
@@ -323,7 +323,7 @@ class GlobalSpeedAccelClean(BaseCleaningAlgorithm):
         data_manager = DataManager('idf', data_path)
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=data_manager.clean_data.columns)
 
         # 计算清洗前数据的平均绝对误差
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
@@ -332,7 +332,7 @@ class GlobalSpeedAccelClean(BaseCleaningAlgorithm):
 
         # 使用 ColConstraintMiner 从 clean_data 中挖掘列约束
         miner = ColConstraintMiner(data_manager.clean_data)
-        speed_constraints, accel_constraints = miner.mine_constraints()
+        speed_constraints, accel_constraints = miner.mine_col_constraints()
 
         # 创建GlobalSpeedAccelClean实例并清洗数据，传递速度和加速度约束参数
         globalspeedaccelclean = GlobalSpeedAccelClean()
@@ -346,7 +346,7 @@ class GlobalSpeedAccelClean(BaseCleaningAlgorithm):
 
 
 if __name__ == "__main__":
-    # LocalSpeedClean.test_LocalSpeedClean()
-    # GlobalSpeedClean.test_GlobalSpeedClean()
-    # LocalSpeedAccelClean.test_LocalSpeedAccelClean()
+    LocalSpeedClean.test_LocalSpeedClean()
+    GlobalSpeedClean.test_GlobalSpeedClean()
+    LocalSpeedAccelClean.test_LocalSpeedAccelClean()
     GlobalSpeedAccelClean.test_GlobalSpeedAccelClean()

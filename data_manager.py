@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 
 class DataManager:
-    def __init__(self, dataset, dataset_path, error_rate=0.1):
+    def __init__(self, dataset, dataset_path, label_rate=0.1):
         """
         初始化数据管理器。
         :param dataset: 数据库的名称。
@@ -20,7 +20,7 @@ class DataManager:
         self.observed_data = self.clean_data.copy()
         self.error_mask = pd.DataFrame(False, index=self.clean_data.index, columns=self.clean_data.columns)
         self.is_label = pd.DataFrame(False, index=self.observed_data.index, columns=self.observed_data.columns)  # 初始化is_label
-        self.randomly_label_data(error_rate)  # 随机标记指定比例的数据
+        self.randomly_label_data(label_rate)  # 随机标记指定比例的数据
 
     def estimate_kalman_parameters(self):
         # 针对每列估计参数
@@ -86,13 +86,14 @@ class DataManager:
             restored_data[col] = (restored_data[col] / scale_factor) + min_val
         return restored_data
 
-    def inject_errors(self, error_ratio, error_types):
+    def inject_errors(self, error_ratio, error_types, covered_attrs):
         """
         向数据中注入错误。
         :param error_ratio: 错误注入的比例。
         :param error_types: 要注入的错误类型列表。
+        :param covered_attrs: 可以注入错误的属性集合。
         """
-        n_rows, n_cols = self.clean_data.shape
+        n_rows, _ = self.clean_data.shape
         total_errors = int(n_rows * error_ratio)
 
         while total_errors > 0:
@@ -104,8 +105,11 @@ class DataManager:
             if self.error_mask.iloc[start_row:start_row + error_length].any().any():
                 continue
 
-            selected_cols = random.sample(list(self.clean_data.columns), k=random.randint(1, n_cols // 2 - 1))
+            # 仅从 covered_attrs 中选择列进行错误注入
+            selected_cols = random.sample(list(covered_attrs), k=random.randint(1, min(3, len(covered_attrs))))
             error_type = random.choice(error_types)
+
+            total_errors -= error_length
 
             if error_type == 'drift':
                 self._inject_drift_error(start_row, error_length, selected_cols)
@@ -234,7 +238,7 @@ def plot_segment(dm, col, start, end, buffer):
 
 if __name__ == '__main__':
     dm = DataManager('idf', 'datasets/idf.csv')
-    dm.inject_errors(0.1, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+    dm.inject_errors(0.1, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=dm.clean_data.columns)
 
     # 绘制每个错误段数据
     plot_error_segments(dm, buffer=10)

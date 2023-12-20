@@ -47,27 +47,58 @@ class RowConstraintMiner:
 
         return models_with_loss
 
+    # 在超图上使用最小生成树挖掘行约束集合的版本，已弃用
+    # def select_optimal_models(self, models_with_loss):
+    #     # 对模型按照损失排序
+    #     sorted_models = sorted(models_with_loss, key=lambda x: x[3])
+    #
+    #     # 初始化一个全0的数组来跟踪已覆盖的顶点
+    #     covered = np.zeros(self.df.shape[1], dtype=int)
+    #     selected_models = []
+    #
+    #     for model_info in sorted_models:
+    #         binary_string, _, _, _ = model_info
+    #         # 检查当前模型是否添加了新的覆盖
+    #         if not np.any(np.bitwise_and(binary_string, np.bitwise_not(covered))):
+    #             continue
+    #
+    #         # 添加当前模型，并更新已覆盖的顶点
+    #         selected_models.append(model_info)
+    #         covered = np.bitwise_or(covered, binary_string)
+    #
+    #         # 检查是否所有顶点都已被覆盖
+    #         if np.all(covered == 1):
+    #             break
+    #
+    #     return selected_models
+
     def select_optimal_models(self, models_with_loss):
-        # 对模型按照损失排序
-        sorted_models = sorted(models_with_loss, key=lambda x: x[3])
+        # 初始化一个记录属性被选中次数的字典
+        attr_selected_count = {col: 0 for col in self.df.columns}
 
-        # 初始化一个全0的数组来跟踪已覆盖的顶点
-        covered = np.zeros(self.df.shape[1], dtype=int)
         selected_models = []
-
-        for model_info in sorted_models:
-            binary_string, _, _, _ = model_info
-            # 检查当前模型是否添加了新的覆盖
-            if not np.any(np.bitwise_and(binary_string, np.bitwise_not(covered))):
+        for binary_string, y_column, model, loss in models_with_loss:
+            # 检查模型的平均绝对误差是否在阈值以下
+            if loss > 0.5:
                 continue
 
-            # 添加当前模型，并更新已覆盖的顶点
-            selected_models.append(model_info)
-            covered = np.bitwise_or(covered, binary_string)
+            # 确定当前模型涉及的属性
+            involved_attrs = self.df.columns[binary_string == 1]
 
-            # 检查是否所有顶点都已被覆盖
-            if np.all(covered == 1):
-                break
+            # 计算与已覆盖属性的重叠数
+            overlap_count = sum([binary_string[self.df.columns.get_loc(col)] for col in attr_selected_count if
+                                 attr_selected_count[col] > 0])
+
+            # 获取唯一重叠的属性被选中的次数
+            unique_overlap_selected_count = max(
+                [attr_selected_count[col] for col in involved_attrs if attr_selected_count[col] > 0], default=0)
+
+            # 根据规则判断是否添加当前模型
+            if overlap_count <= 1 and unique_overlap_selected_count <= 3:
+                selected_models.append((binary_string, y_column, model, loss))
+                # 更新属性被选中次数
+                for attr in involved_attrs:
+                    attr_selected_count[attr] += 1
 
         return selected_models
 
@@ -76,6 +107,7 @@ class RowConstraintMiner:
         optimal_models = self.select_optimal_models(models_with_loss)
 
         constraints = []
+        covered_attrs = set()  # 用于记录所覆盖的属性集合
         for binary_string, y_column, model, _ in optimal_models:
             selected_columns = self.df.columns[binary_string == 1]
             X = self.df[selected_columns.drop(y_column)]
@@ -88,13 +120,11 @@ class RowConstraintMiner:
 
             # 计算每个数据点的损失
             losses = y_pred - y
-            rho_min, rho_max = np.min(losses), np.max(losses)
+            rho_min, rho_max = np.min(losses) - new_model.intercept_, np.max(losses) - new_model.intercept_
 
             # 准备系数数组
             full_coef = np.zeros(self.df.shape[1])
-            # 将模型系数放在正确的位置
             full_coef[[self.df.columns.get_loc(col) for col in selected_columns.drop(y_column)]] = new_model.coef_
-            # y_column 的系数设置为 -1
             full_coef[self.df.columns.get_loc(y_column)] = -1
 
             # 构建约束字符串，只包括非零系数的项
@@ -102,8 +132,9 @@ class RowConstraintMiner:
             constraint_str = f"{rho_min:.3f} <= {' + '.join(terms)} <= {rho_max:.3f}"
 
             constraints.append((constraint_str, full_coef, rho_min, rho_max))
+            covered_attrs.update(selected_columns)
 
-        return constraints
+        return constraints, covered_attrs
 
 
 class ColConstraintMiner:

@@ -1,7 +1,7 @@
 import numpy as np
 
 import data_utils
-from base_algorithm import BaseCleaningAlgorithm
+from cleaning_algorithms.base_algorithm import BaseCleaningAlgorithm
 from data_manager import DataManager
 
 
@@ -97,7 +97,7 @@ class IMRClean(BaseCleaningAlgorithm):
         data_manager = DataManager('idf', data_path)
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=data_manager.clean_data.columns)
 
         # 随机标记一定比例的数据为需要清洗
         data_manager.randomly_label_data(0.1)

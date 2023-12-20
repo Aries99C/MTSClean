@@ -20,7 +20,7 @@ class EWMAClean(BaseCleaningAlgorithm):
     def test_EWMAClean():
         data_path = '../datasets/idf.csv'
         data_manager = DataManager('idf', data_path)
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=data_manager.clean_data.columns)
 
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
                                                                                         data_manager.observed_data)
@@ -46,7 +46,7 @@ class MedianFilterClean(BaseCleaningAlgorithm):
     def test_MedianFilterClean():
         data_path = '../datasets/idf.csv'
         data_manager = DataManager('idf', data_path)
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=data_manager.clean_data.columns)
 
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
                                                                                         data_manager.observed_data)
@@ -84,7 +84,7 @@ class KalmanFilterClean(BaseCleaningAlgorithm):
     def test_KalmanFilterClean():
         data_path = '../datasets/idf.csv'
         data_manager = DataManager('idf', data_path)
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=data_manager.clean_data.columns)
 
         initial_state, observation_covariance, transition_covariance, transition_matrices = data_manager.estimate_kalman_parameters()
 

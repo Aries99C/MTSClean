@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import data_utils
-from base_algorithm import BaseCleaningAlgorithm
+from cleaning_algorithms.base_algorithm import BaseCleaningAlgorithm
 from scipy.signal import medfilt
 from pykalman import KalmanFilter
 
@@ -35,7 +35,7 @@ class EWMAClean(BaseCleaningAlgorithm):
 
 
 class MedianFilterClean(BaseCleaningAlgorithm):
-    def __init__(self, kernel_size=3):
+    def __init__(self, kernel_size=5):
         self.kernel_size = kernel_size
 
     def clean(self, data_manager, **args):
@@ -52,7 +52,7 @@ class MedianFilterClean(BaseCleaningAlgorithm):
                                                                                         data_manager.observed_data)
         print("MedianFilterClean - 清洗前数据的平均绝对误差：", average_absolute_diff_before)
 
-        median_filter_clean = MedianFilterClean(kernel_size=3)
+        median_filter_clean = MedianFilterClean(kernel_size=5)
         cleaned_data = median_filter_clean.clean(data_manager)
 
         average_absolute_diff_after = data_utils.calculate_average_absolute_difference(cleaned_data,
@@ -60,6 +60,50 @@ class MedianFilterClean(BaseCleaningAlgorithm):
         print("MedianFilterClean - 清洗后数据的平均绝对误差：", average_absolute_diff_after)
 
 
+class KalmanFilterClean(BaseCleaningAlgorithm):
+    def __init__(self, initial_state=None, observation_covariance=None, transition_covariance=None, transition_matrices=None):
+        self.initial_state = initial_state
+        self.observation_covariance = observation_covariance
+        self.transition_covariance = transition_covariance
+        self.transition_matrices = transition_matrices
+
+    def clean(self, data_manager, **args):
+        cleaned_data = data_manager.observed_data.copy()
+
+        for col in cleaned_data.columns:
+            kf = KalmanFilter(initial_state_mean=self.initial_state[col],
+                              observation_covariance=self.observation_covariance[col],
+                              transition_covariance=self.transition_covariance[col],
+                              transition_matrices=self.transition_matrices[col])
+
+            cleaned_data[col], _ = kf.filter(cleaned_data[col].values)
+
+        return cleaned_data
+
+    @staticmethod
+    def test_KalmanFilterClean():
+        data_path = '../datasets/idf.csv'
+        data_manager = DataManager('idf', data_path)
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'])
+
+        initial_state, observation_covariance, transition_covariance, transition_matrices = data_manager.estimate_kalman_parameters()
+
+        average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
+                                                                                        data_manager.observed_data)
+        print("KalmanFilterClean - 清洗前数据的平均绝对误差：", average_absolute_diff_before)
+
+        kalman_filter_clean = KalmanFilterClean(initial_state=initial_state,
+                                                observation_covariance=observation_covariance,
+                                                transition_covariance=transition_covariance,
+                                                transition_matrices=transition_matrices)
+        cleaned_data = kalman_filter_clean.clean(data_manager)
+
+        average_absolute_diff_after = data_utils.calculate_average_absolute_difference(cleaned_data,
+                                                                                       data_manager.clean_data)
+        print("KalmanFilterClean - 清洗后数据的平均绝对误差：", average_absolute_diff_after)
+
+
 if __name__ == '__main__':
     EWMAClean.test_EWMAClean()
     MedianFilterClean.test_MedianFilterClean()
+    KalmanFilterClean.test_KalmanFilterClean()

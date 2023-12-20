@@ -19,7 +19,7 @@ class MTSCleanRow(BaseCleaningAlgorithm):
             # 如果未提供constraints，可以在这里生成默认约束
             # 或者返回一个错误消息，取决于您的需求
             miner = RowConstraintMiner(data_manager.clean_data)
-            constraints = miner.mining_row_constraints(attr_num=3)
+            constraints = miner.mine_row_constraints(attr_num=3)
 
         # 为 observed_data 的每行构建并求解线性规划问题
         n_rows, n_cols = data_manager.observed_data.shape

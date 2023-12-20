@@ -22,6 +22,22 @@ class DataManager:
         self.is_label = pd.DataFrame(False, index=self.observed_data.index, columns=self.observed_data.columns)  # 初始化is_label
         self.randomly_label_data(error_rate)  # 随机标记指定比例的数据
 
+    def estimate_kalman_parameters(self):
+        # 针对每列估计参数
+        initial_state = {}
+        observation_covariance = {}
+        transition_covariance = {}
+        transition_matrices = {}
+
+        for col in self.clean_data.columns:
+            initial_state[col] = self.clean_data[col].iloc[0]
+            var_col = np.var(self.clean_data[col])
+            observation_covariance[col] = var_col if var_col > 0 else 1
+            transition_covariance[col] = var_col / 2 if var_col > 0 else 0.5
+            transition_matrices[col] = 1  # 单变量情况下，转换矩阵是标量 1
+
+        return initial_state, observation_covariance, transition_covariance, transition_matrices
+
     def randomly_label_data(self, error_rate):
         # 确保error_rate在合理范围
         if not 0 <= error_rate <= 1:

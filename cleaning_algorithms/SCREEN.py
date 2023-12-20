@@ -1,4 +1,4 @@
-from base_algorithm import BaseCleaningAlgorithm
+from cleaning_algorithms.base_algorithm import BaseCleaningAlgorithm
 from data_manager import DataManager
 from constraints import ColConstraintMiner
 import numpy as np

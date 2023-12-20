@@ -71,7 +71,7 @@ class RowConstraintMiner:
 
         return selected_models
 
-    def mining_row_constraints(self, attr_num=3):
+    def mine_row_constraints(self, attr_num=3):
         models_with_loss = self.train_models_and_evaluate(attr_num)
         optimal_models = self.select_optimal_models(models_with_loss)
 
@@ -124,7 +124,7 @@ class ColConstraintMiner:
             acceleration_constraints[col] = (accelerations.min(), accelerations.max())
         return acceleration_constraints
 
-    def mine_constraints(self):
+    def mine_col_constraints(self):
         speed_constraints = self._calculate_speeds()
         acceleration_constraints = self._calculate_accelerations()
         return speed_constraints, acceleration_constraints

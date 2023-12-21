@@ -106,6 +106,9 @@ class MTSClean(BaseCleaningAlgorithm):
             miner = RowConstraintMiner(data_manager.clean_data)
             row_constraints, _ = miner.mine_row_constraints(attr_num=3)
 
+        for row_constraint in row_constraints:
+            print(row_constraint[0])
+
         speed_constraints = args.get('speed_constraints')
         if speed_constraints is None:
             raise ValueError("Speed constraints are required for secondary cleaning.")

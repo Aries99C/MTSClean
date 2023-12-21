@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import os
 from data_manager import DataManager
 from data_utils import calculate_average_absolute_difference
 from constraints import RowConstraintMiner, ColConstraintMiner
@@ -11,32 +13,71 @@ from cleaning_algorithms.IMR import IMRClean
 
 
 def plot_segment(dm, col, start, end, buffer, cleaned_results):
-    # 计算绘图范围
     plot_start = max(0, start - buffer)
     plot_end = min(len(dm.observed_data), end + buffer)
+    fig, ax = plt.subplots(figsize=(12, 6))
 
-    # 绘制观测值、真实值
-    plt.figure(figsize=(12, 6))
-    plt.plot(dm.observed_data[col].iloc[plot_start:plot_end], label='Observed', color='gray', marker='o', linestyle='--')
-    plt.plot(dm.clean_data[col].iloc[plot_start:plot_end], label='True', color='green', marker='x', linestyle='-.')
+    ax.plot(dm.observed_data[col].iloc[plot_start:plot_end], label='Observed', color='gray', marker='o', linestyle='--')
+    ax.plot(dm.clean_data[col].iloc[plot_start:plot_end], label='True', color='green', marker='x', linestyle='-.')
 
-    # 为不同的清洗算法指定不同的标记
     markers = {'MTSClean': '^', 'GlobalSpeedAccelClean': 's', 'MedianFilterClean': 'd', 'IMRClean': '+'}
     colors = {'MTSClean': 'red', 'GlobalSpeedAccelClean': 'purple', 'MedianFilterClean': 'orange', 'IMRClean': 'blue'}
 
     for name, cleaned_data in cleaned_results.items():
         marker = markers.get(name, '^')
         color = colors.get(name, 'gray')
-        plt.plot(cleaned_data[col].iloc[plot_start:plot_end], label=name, color=color, marker=marker)
+        ax.plot(cleaned_data[col].iloc[plot_start:plot_end], label=name, color=color, marker=marker)
 
-    plt.title(f'Comparison of Cleaning Results for {col} [{start}:{end}]')
-    plt.xlabel('Time')
-    plt.ylabel('Value')
-    plt.legend()
-    plt.show()
+    ax.set_title(f'Comparison of Cleaning Results for {col} [{start}:{end}]')
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Value')
+    ax.legend()
+
+    return fig, ax
+
+
+def should_visualize_segment(dm, cleaned_results, col, start, end):
+    mtsclean_error = calculate_segment_error(cleaned_results['MTSClean'][col], dm.clean_data[col], start, end)
+
+    for name, cleaned_data in cleaned_results.items():
+        if name != 'MTSClean':
+            other_error = calculate_segment_error(cleaned_data[col], dm.clean_data[col], start, end)
+            if other_error < mtsclean_error:
+                return False
+
+    return True
+
+
+def calculate_segment_error(cleaned_data, true_data, start, end):
+    return np.mean(np.abs(cleaned_data[start:end] - true_data[start:end]))
+
+
+def save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, dir_path):
+    plot_start = max(0, start - buffer)
+    plot_end = min(len(dm.observed_data), end + buffer)
+    segment_df = pd.DataFrame({
+        'Observed': dm.observed_data[col].iloc[plot_start:plot_end],
+        'True': dm.clean_data[col].iloc[plot_start:plot_end]
+    })
+
+    for name, cleaned_data in cleaned_results.items():
+        segment_df[name] = cleaned_data[col].iloc[plot_start:plot_end]
+
+    segment_csv_file = f'{dir_path}/{col}_segment_{start}_{end}.csv'
+    segment_df.to_csv(segment_csv_file)
+
+    # 保存图像
+    fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results)
+    segment_image_file = f'{dir_path}/{col}_segment_{start}_{end}.png'
+    fig.savefig(segment_image_file)
+    plt.close(fig)  # 关闭图表对象
 
 
 def plot_error_segments(dm, buffer, cleaned_results):
+    examples_dir = 'examples'
+    if not os.path.exists(examples_dir):
+        os.makedirs(examples_dir)
+
     for col in dm.error_mask.columns:
         error_locations = dm.error_mask[col]
         start = None
@@ -45,10 +86,32 @@ def plot_error_segments(dm, buffer, cleaned_results):
                 start = i
             elif not error_locations[i] and start is not None:
                 end = i
-                plot_segment(dm, col, start, end, buffer, cleaned_results)
+                if should_visualize_segment(dm, cleaned_results, col, start, end):
+                    fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results)
+                    plt.show()  # 显示图表
+
+                    user_input = input("是否需要保存这段错误的可视化结果? (y/n): ")
+                    if user_input.lower() == 'y':
+                        save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, examples_dir)
+
+                    user_input = input("是否继续查看下一个错误段的可视化结果? (y/n): ")
+                    if user_input.lower() != 'y':
+                        return  # 提前结束函数，不再处理后续错误段
+
                 start = None
-        if start is not None:  # 处理最后一个错误段
-            plot_segment(dm, col, start, len(error_locations), buffer, cleaned_results)
+
+        if start is not None:
+            end = len(error_locations)
+            if should_visualize_segment(dm, cleaned_results, col, start, end):
+                plot_segment(dm, col, start, end, buffer, cleaned_results)
+
+                user_input = input("是否需要保存这段错误的可视化结果? (y/n): ")
+                if user_input.lower() == 'y':
+                    save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, examples_dir)
+
+                user_input = input("是否继续查看下一个错误段的可视化结果? (y/n): ")
+                if user_input.lower() != 'y':
+                    return  # 提前结束函数，不再处理后续错误段
 
 
 def visualize_cleaning_results(data_manager):

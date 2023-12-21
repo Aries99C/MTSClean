@@ -47,31 +47,6 @@ class RowConstraintMiner:
 
         return models_with_loss
 
-    # 在超图上使用最小生成树挖掘行约束集合的版本，已弃用
-    # def select_optimal_models(self, models_with_loss):
-    #     # 对模型按照损失排序
-    #     sorted_models = sorted(models_with_loss, key=lambda x: x[3])
-    #
-    #     # 初始化一个全0的数组来跟踪已覆盖的顶点
-    #     covered = np.zeros(self.df.shape[1], dtype=int)
-    #     selected_models = []
-    #
-    #     for model_info in sorted_models:
-    #         binary_string, _, _, _ = model_info
-    #         # 检查当前模型是否添加了新的覆盖
-    #         if not np.any(np.bitwise_and(binary_string, np.bitwise_not(covered))):
-    #             continue
-    #
-    #         # 添加当前模型，并更新已覆盖的顶点
-    #         selected_models.append(model_info)
-    #         covered = np.bitwise_or(covered, binary_string)
-    #
-    #         # 检查是否所有顶点都已被覆盖
-    #         if np.all(covered == 1):
-    #             break
-    #
-    #     return selected_models
-
     def select_optimal_models(self, models_with_loss):
         # 初始化一个记录属性被选中次数的字典
         attr_selected_count = {col: 0 for col in self.df.columns}

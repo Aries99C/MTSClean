@@ -5,6 +5,11 @@ from constraints import RowConstraintMiner, ColConstraintMiner
 import numpy as np
 import pandas as pd
 from scipy.optimize import linprog
+import random
+from deap import base, creator, tools, algorithms
+import geatpy as ea
+from tqdm import tqdm
+from multiprocessing import Pool
 
 
 class MTSCleanRow(BaseCleaningAlgorithm):
@@ -240,7 +245,131 @@ class MTSClean(BaseCleaningAlgorithm):
         print(f"清洗数据违反的行约束次数：{violations_count}")
 
 
+class MTSCleanPareto(BaseCleaningAlgorithm):
+    def __init__(self, num_generations=50, pop_size=100):
+        self.num_generations = num_generations
+        self.pop_size = pop_size
+        self.row_constraints = None
+
+    def clean(self, data_manager, **args):
+        self.row_constraints = args.get('row_constraints')
+        if self.row_constraints is None:
+            raise ValueError("Row constraints are required for MTSCleanPareto.")
+
+        creator.create("FitnessMulti", base.Fitness, weights=(-1.0,) * (len(self.row_constraints) + 1))
+        creator.create("Individual", list, fitness=creator.FitnessMulti)
+
+        # 打开进程池
+        pool = Pool()
+        tasks = [(row,) for _, row in data_manager.observed_data.iterrows()]
+        results = list(tqdm(pool.imap(self._optimize_row, tasks), total=len(tasks)))
+
+        pool.close()
+        pool.join()
+
+        # 将并行结果合并到一个DataFrame中
+        cleaned_data = pd.concat(results, axis=1).T
+        cleaned_data.columns = data_manager.observed_data.columns
+
+        return cleaned_data
+
+    def _optimize_row(self, task):
+        # 在每个子进程中重新创建所需的 DEAP 类
+        if not hasattr(creator, "Individual"):
+            creator.create("FitnessMulti", base.Fitness, weights=(-1.0,) * (len(self.row_constraints) + 1))
+            creator.create("Individual", list, fitness=creator.FitnessMulti)
+
+        row, = task
+        optimized_row = self._pareto_optimization(row, self.row_constraints)
+        return pd.Series(optimized_row)
+
+    def _pareto_optimization(self, row_data, constraints):
+        toolbox = base.Toolbox()
+        toolbox.register("individual", self._init_individual, row_data)
+        toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+        toolbox.register("evaluate", self._evaluate_individual, row_data=row_data, constraints=constraints)
+        toolbox.register("mate", tools.cxTwoPoint)
+        toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.1)
+        toolbox.register("select", tools.selNSGA2)
+
+        population = toolbox.population(n=self.pop_size)
+        algorithms.eaMuPlusLambda(population, toolbox, mu=self.pop_size, lambda_=self.pop_size,
+                                  cxpb=0.5, mutpb=0.2, ngen=self.num_generations, verbose=False)
+
+        pareto_front = tools.sortNondominated(population, len(population), first_front_only=True)[0]
+        best_individual = pareto_front[0]
+
+        return best_individual
+
+    def _init_individual(self, row_data):
+        individual = row_data.tolist()
+        return creator.Individual(individual)
+
+    def _evaluate_individual(self, individual, row_data, constraints):
+        # 计算行约束违反程度
+        constraint_violations = tuple(
+            self._calculate_constraint_violation(individual, constraint) for constraint in constraints)
+
+        # 计算与原始数据的绝对误差
+        absolute_error = sum(abs(ind - obs) for ind, obs in zip(individual, row_data))
+
+        # 将行约束违反程度和绝对误差组合为一个元组作为适应度
+        fitness = constraint_violations + (absolute_error,)
+
+        return fitness
+
+    def _calculate_constraint_violation(self, individual, constraint):
+        _, coefs, rho_min, rho_max = constraint
+        value = sum(coef * ind for coef, ind in zip(coefs, individual))
+        if value < rho_min:
+            return abs(rho_min - value)
+        elif value > rho_max:
+            return abs(value - rho_max)
+        return 0.0
+
+    @staticmethod
+    def test_MTSCleanPareto():
+        # 加载数据
+        data_path = '../datasets/idf.csv'
+
+        # 初始化DataManager
+        data_manager = DataManager('idf', data_path)
+
+        # 使用 RowConstraintMiner 从 clean_data 中挖掘行约束
+        row_miner = RowConstraintMiner(data_manager.clean_data)
+        row_constraints, covered_attrs = row_miner.mine_row_constraints(attr_num=3)
+
+        # 在DataManager中注入错误
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs)
+
+        # 计算清洗前数据的平均绝对误差
+        average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
+                                                                                        data_manager.observed_data)
+        print("清洗前数据的平均绝对误差：", average_absolute_diff_before)
+
+        # 检查数据是否违反了行约束
+        violations_count = data_utils.check_constraints_violations(data_manager.observed_data, row_constraints)
+        print(f"观测数据违反的行约束次数：{violations_count}")
+
+        # 创建MTSCleanPareto实例并清洗数据，只传递行约束参数
+        mtsclean_pareto = MTSCleanPareto()
+        cleaned_data = mtsclean_pareto.clean(data_manager, row_constraints=row_constraints)
+
+        # 计算清洗后数据的平均绝对误差
+        average_absolute_diff_after = data_utils.calculate_average_absolute_difference(cleaned_data,
+                                                                                       data_manager.clean_data)
+        print("清洗后数据的平均绝对误差：", average_absolute_diff_after)
+
+        # 检查数据是否违反了行约束
+        violations_count = data_utils.check_constraints_violations(cleaned_data, row_constraints)
+        print(f"清洗数据违反的行约束次数：{violations_count}")
+
+        # 保存清洗后的数据到 CSV 文件
+        cleaned_data.to_csv('Pareto_cleaned_data.csv', index=False)
+
+
 # 在适当的时候调用测试函数
 if __name__ == "__main__":
     # MTSCleanRow.test_MTSCleanRow()
-    MTSClean.test_MTSClean()
+    # MTSClean.test_MTSClean()
+    MTSCleanPareto.test_MTSCleanPareto()

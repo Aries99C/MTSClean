@@ -5,28 +5,38 @@ import os
 from data_manager import DataManager
 from data_utils import calculate_average_absolute_difference
 from constraints import RowConstraintMiner, ColConstraintMiner
-from cleaning_algorithms.MTSClean import MTSCleanRow, MTSClean
+from cleaning_algorithms.MTSClean import MTSCleanRow, MTSClean, MTSCleanSoft
 from cleaning_algorithms.SCREEN import LocalSpeedClean, GlobalSpeedClean, LocalSpeedAccelClean, GlobalSpeedAccelClean
 from cleaning_algorithms.Smooth import EWMAClean, MedianFilterClean, KalmanFilterClean
 from cleaning_algorithms.IMR import IMRClean
 # ... 导入其他所需模块 ...
 
 
-def plot_segment(dm, col, start, end, buffer, cleaned_results):
+def plot_segment(dm, col, start, end, buffer, cleaned_results, row_constraints):
     plot_start = max(0, start - buffer)
     plot_end = min(len(dm.observed_data), end + buffer)
     fig, ax = plt.subplots(figsize=(12, 6))
 
+    # 绘制观测值和真实值
     ax.plot(dm.observed_data[col].iloc[plot_start:plot_end], label='Observed', color='gray', marker='o', linestyle='--')
     ax.plot(dm.clean_data[col].iloc[plot_start:plot_end], label='True', color='green', marker='x', linestyle='-.')
 
-    markers = {'MTSClean': '^', 'GlobalSpeedAccelClean': 's', 'MedianFilterClean': 'd', 'IMRClean': '+'}
-    colors = {'MTSClean': 'red', 'GlobalSpeedAccelClean': 'purple', 'MedianFilterClean': 'orange', 'IMRClean': 'blue'}
-
+    # 绘制清洗算法的结果
+    markers = {'MTSClean': '^', 'MTSCleanSoft': '*', 'GlobalSpeedAccelClean': 's', 'MedianFilterClean': 'd',
+               'IMRClean': '+'}
+    colors = {'MTSClean': 'red', 'MTSCleanSoft': 'pink', 'GlobalSpeedAccelClean': 'purple',
+              'MedianFilterClean': 'orange', 'IMRClean': 'blue'}
     for name, cleaned_data in cleaned_results.items():
-        marker = markers.get(name, '^')
-        color = colors.get(name, 'gray')
-        ax.plot(cleaned_data[col].iloc[plot_start:plot_end], label=name, color=color, marker=marker)
+        ax.plot(cleaned_data[col].iloc[plot_start:plot_end], label=name, marker=markers[name], color=colors[name])
+
+    # 获取当前列的索引
+    col_index = dm.observed_data.columns.get_loc(col)
+
+    # 计算并绘制正确值的取值范围
+    for _, coefs, rho_min, rho_max in row_constraints:
+        if coefs[col_index] != 0:  # 判断当前行约束是否与col有关
+            lower_bound, upper_bound = calculate_correct_value_range(dm, coefs, rho_min, rho_max, col_index, plot_start, plot_end)
+            ax.fill_between(range(plot_start, plot_end), lower_bound, upper_bound, color='yellow', alpha=0.3, label='Correct Value Range')
 
     ax.set_title(f'Comparison of Cleaning Results for {col} [{start}:{end}]')
     ax.set_xlabel('Time')
@@ -34,6 +44,29 @@ def plot_segment(dm, col, start, end, buffer, cleaned_results):
     ax.legend()
 
     return fig, ax
+
+
+def calculate_correct_value_range(dm, coefs, rho_min, rho_max, col_index, start, end):
+    lower_bound = []
+    upper_bound = []
+
+    for index in range(start, end):
+        # 计算除目标列外的其他列的加权和
+        other_values_sum = sum(dm.observed_data.iloc[index, i] * coefs[i] for i in range(len(coefs)) if i != col_index)
+
+        # 计算当前行的取值范围
+        target_coef = coefs[col_index]
+        if target_coef != 0:  # 避免除以零
+            min_value = (rho_min - other_values_sum) / target_coef
+            max_value = (rho_max - other_values_sum) / target_coef
+            lower_bound.append(min_value)
+            upper_bound.append(max_value)
+        else:
+            lower_bound.append(None)
+            upper_bound.append(None)
+
+    return lower_bound, upper_bound
+
 
 
 def should_visualize_segment(dm, cleaned_results, col, start, end):
@@ -52,7 +85,7 @@ def calculate_segment_error(cleaned_data, true_data, start, end):
     return np.mean(np.abs(cleaned_data[start:end] - true_data[start:end]))
 
 
-def save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, dir_path):
+def save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, dir_path, row_constraints):
     plot_start = max(0, start - buffer)
     plot_end = min(len(dm.observed_data), end + buffer)
     segment_df = pd.DataFrame({
@@ -67,13 +100,13 @@ def save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, dir_path):
     segment_df.to_csv(segment_csv_file)
 
     # 保存图像
-    fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results)
+    fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results, row_constraints)
     segment_image_file = f'{dir_path}/{col}_segment_{start}_{end}.png'
     fig.savefig(segment_image_file)
     plt.close(fig)  # 关闭图表对象
 
 
-def plot_error_segments(dm, buffer, cleaned_results):
+def plot_error_segments(dm, buffer, cleaned_results, row_constraints):
     examples_dir = 'examples'
     if not os.path.exists(examples_dir):
         os.makedirs(examples_dir)
@@ -87,12 +120,12 @@ def plot_error_segments(dm, buffer, cleaned_results):
             elif not error_locations[i] and start is not None:
                 end = i
                 if should_visualize_segment(dm, cleaned_results, col, start, end):
-                    fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results)
+                    fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results, row_constraints)
                     plt.show()  # 显示图表
 
                     user_input = input("是否需要保存这段错误的可视化结果? (y/n): ")
                     if user_input.lower() == 'y':
-                        save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, examples_dir)
+                        save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, examples_dir, row_constraints)
 
                     user_input = input("是否继续查看下一个错误段的可视化结果? (y/n): ")
                     if user_input.lower() != 'y':
@@ -103,11 +136,12 @@ def plot_error_segments(dm, buffer, cleaned_results):
         if start is not None:
             end = len(error_locations)
             if should_visualize_segment(dm, cleaned_results, col, start, end):
-                plot_segment(dm, col, start, end, buffer, cleaned_results)
+                fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results, row_constraints)
+                plt.show()  # 显示图表
 
                 user_input = input("是否需要保存这段错误的可视化结果? (y/n): ")
                 if user_input.lower() == 'y':
-                    save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, examples_dir)
+                    save_segment_to_csv(dm, cleaned_results, col, start, end, buffer, examples_dir, row_constraints)
 
                 user_input = input("是否继续查看下一个错误段的可视化结果? (y/n): ")
                 if user_input.lower() != 'y':
@@ -132,12 +166,13 @@ def visualize_cleaning_results(data_manager):
     algorithms = {
         # 'MTSCleanRow': MTSCleanRow(),
         'MTSClean': MTSClean(),
+        'MTSCleanSoft': MTSCleanSoft(),
         # 'LocalSpeedClean': LocalSpeedClean(),
         # 'GlobalSpeedClean': GlobalSpeedClean(),
         # 'LocalSpeedAccelClean': LocalSpeedAccelClean(),
         'GlobalSpeedAccelClean': GlobalSpeedAccelClean(),
         # 'EWMAClean': EWMAClean(),
-        'MedianFilterClean': MedianFilterClean(),
+        # 'MedianFilterClean': MedianFilterClean(),
         # 'KalmanFilterClean': KalmanFilterClean(*kalman_params),
         'IMRClean': IMRClean()
         # ... 添加其他清洗算法 ...
@@ -152,7 +187,7 @@ def visualize_cleaning_results(data_manager):
                                       accel_constraints=accel_constraints)
         elif name == 'MTSCleanRow':
             cleaned_data = algo.clean(data_manager, row_constraints=row_constraints)
-        elif name == 'MTSClean':
+        elif name in ['MTSClean', 'MTSCleanSoft']:
             cleaned_data = algo.clean(data_manager, row_constraints=row_constraints, speed_constraints=speed_constraints)
         else:
             cleaned_data = algo.clean(data_manager)
@@ -173,11 +208,11 @@ def visualize_cleaning_results(data_manager):
     plt.show()
 
     # 只选择特定的算法进行可视化
-    selected_algorithms = ['MTSClean', 'GlobalSpeedAccelClean', 'MedianFilterClean', 'IMRClean']
+    selected_algorithms = ['MTSClean', 'MTSCleanSoft', 'GlobalSpeedAccelClean', 'MedianFilterClean', 'IMRClean']
     selected_cleaned_results = {name: result for name, result in cleaned_results.items() if name in selected_algorithms}
 
     # 调用 plot_error_segments 来可视化每段错误数据
-    plot_error_segments(data_manager, buffer=10, cleaned_results=selected_cleaned_results)
+    plot_error_segments(data_manager, buffer=10, cleaned_results=selected_cleaned_results, row_constraints=row_constraints)
 
 
 if __name__ == '__main__':

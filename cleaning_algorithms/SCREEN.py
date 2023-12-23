@@ -1,3 +1,5 @@
+from tqdm import tqdm
+
 from cleaning_algorithms.base_algorithm import BaseCleaningAlgorithm
 from data_manager import DataManager
 from constraints import ColConstraintMiner
@@ -20,7 +22,7 @@ class LocalSpeedClean(BaseCleaningAlgorithm):
         # 创建清洗后的数据副本
         cleaned_data = observed_data.copy()
 
-        for col in cleaned_data.columns:  # 逐列修复
+        for col in tqdm(cleaned_data.columns, desc="Local Speed Cleaning"):
             # 获取当前列的速度约束上下界
             speed_lb = speed_constraints[col][0]
             speed_ub = speed_constraints[col][1]
@@ -86,7 +88,7 @@ class GlobalSpeedClean(BaseCleaningAlgorithm):
 
         cleaned_data = observed_data.copy()
 
-        for col in observed_data.columns:
+        for col in tqdm(observed_data.columns, desc="Global Speed Cleaning"):
             speed_lb, speed_ub = speed_constraints[col]
             x = observed_data[col].values
             n_rows = len(x)
@@ -176,7 +178,7 @@ class LocalSpeedAccelClean(BaseCleaningAlgorithm):
 
         cleaned_data = observed_data.copy()
 
-        for col in cleaned_data.columns:
+        for col in tqdm(cleaned_data.columns, desc="Local Speed-Accel Cleaning"):
             speed_lb, speed_ub = speed_constraints[col]
             acc_lb, acc_ub = accel_constraints[col]
             data = observed_data[col].values
@@ -254,7 +256,7 @@ class GlobalSpeedAccelClean(BaseCleaningAlgorithm):
 
         cleaned_data = observed_data.copy()
 
-        for col in observed_data.columns:
+        for col in tqdm(observed_data.columns, desc="Global Speed-Accel Cleaning"):
             speed_lb, speed_ub = speed_constraints[col]
             acc_lb, acc_ub = accel_constraints[col]
             x = observed_data[col].values

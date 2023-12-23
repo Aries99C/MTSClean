@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
+
 import data_utils
 from cleaning_algorithms.base_algorithm import BaseCleaningAlgorithm
 from scipy.signal import medfilt
@@ -39,8 +41,11 @@ class MedianFilterClean(BaseCleaningAlgorithm):
         self.kernel_size = kernel_size
 
     def clean(self, data_manager, **args):
-        cleaned_data = data_manager.observed_data.apply(lambda x: medfilt(x, kernel_size=self.kernel_size))
-        return pd.DataFrame(cleaned_data, index=data_manager.observed_data.index, columns=data_manager.observed_data.columns)
+        # 使用 tqdm 包装列迭代
+        cleaned_data = {col: medfilt(data_manager.observed_data[col].values, kernel_size=self.kernel_size)
+                        for col in tqdm(data_manager.observed_data.columns, desc="Median Filtering")}
+
+        return pd.DataFrame(cleaned_data, index=data_manager.observed_data.index)
 
     @staticmethod
     def test_MedianFilterClean():
@@ -70,7 +75,8 @@ class KalmanFilterClean(BaseCleaningAlgorithm):
     def clean(self, data_manager, **args):
         cleaned_data = data_manager.observed_data.copy()
 
-        for col in cleaned_data.columns:
+        # 使用 tqdm 包装列迭代
+        for col in tqdm(cleaned_data.columns, desc="Kalman Filtering"):
             kf = KalmanFilter(initial_state_mean=self.initial_state[col],
                               observation_covariance=self.observation_covariance[col],
                               transition_covariance=self.transition_covariance[col],

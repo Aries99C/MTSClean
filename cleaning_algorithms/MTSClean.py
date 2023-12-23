@@ -5,6 +5,7 @@ from constraints import RowConstraintMiner, ColConstraintMiner
 import numpy as np
 import pandas as pd
 from scipy.optimize import linprog
+from scipy.optimize import minimize
 import random
 from deap import base, creator, tools, algorithms
 import geatpy as ea
@@ -111,22 +112,22 @@ class MTSClean(BaseCleaningAlgorithm):
             miner = RowConstraintMiner(data_manager.clean_data)
             row_constraints, _ = miner.mine_row_constraints(attr_num=3)
 
-        for row_constraint in row_constraints:
-            print(row_constraint[0])
-
         speed_constraints = args.get('speed_constraints')
         if speed_constraints is None:
             raise ValueError("Speed constraints are required for secondary cleaning.")
 
-        # 首先利用行约束进行清洗
-        cleaned_data = self._clean_with_row_constraints(data_manager.observed_data, row_constraints)
-
-        # 然后利用速度约束进行二次清洗
-        cleaned_data = self._clean_with_speed_constraints(cleaned_data, speed_constraints)
+        # 计算总的迭代次数
+        total_steps = data_manager.observed_data.shape[0] + data_manager.observed_data.shape[0] * len(
+            data_manager.observed_data.columns)
+        with tqdm(total=total_steps, desc="Total Cleaning Progress") as pbar:
+            # 先进行行约束清洗
+            cleaned_data = self._clean_with_row_constraints(data_manager.observed_data, row_constraints, pbar)
+            # 再进行速度约束清洗
+            cleaned_data = self._clean_with_speed_constraints(cleaned_data, speed_constraints, pbar)
 
         return cleaned_data
 
-    def _clean_with_row_constraints(self, data, constraints):
+    def _clean_with_row_constraints(self, data, constraints, pbar):
         n_rows, n_cols = data.shape
         cleaned_data = np.zeros_like(data)
 
@@ -151,9 +152,11 @@ class MTSClean(BaseCleaningAlgorithm):
             else:
                 cleaned_data[row_idx, :] = row
 
+            pbar.update(1)  # 更新进度条
+
         return pd.DataFrame(cleaned_data, columns=data.columns)
 
-    def _clean_with_speed_constraints(self, data, speed_constraints):
+    def _clean_with_speed_constraints(self, data, speed_constraints, pbar):
         n_rows = data.shape[0]
         cleaned_data = data.copy()
 
@@ -200,6 +203,8 @@ class MTSClean(BaseCleaningAlgorithm):
                     cleaned_data[col].iloc[start:end] = cleaned_chunk
                 else:
                     print(f"线性规划求解失败于列 {col}, 数据块 {start}-{end}: {result.message}")
+
+            pbar.update(n_rows)  # 更新进度条，这里每次更新相当于完成了一整列的处理
 
         return cleaned_data
 
@@ -368,8 +373,124 @@ class MTSCleanPareto(BaseCleaningAlgorithm):
         cleaned_data.to_csv('Pareto_cleaned_data.csv', index=False)
 
 
+class MTSCleanSoft(BaseCleaningAlgorithm):
+    def __init__(self):
+        pass
+
+    def clean(self, data_manager, **args):
+        row_constraints = args.get('row_constraints')
+        speed_constraints = args.get('speed_constraints')
+
+        # 检查约束
+        if row_constraints is None or speed_constraints is None:
+            raise ValueError("Row and speed constraints are required.")
+
+        # 使用进程池进行并行计算
+        with Pool() as pool:
+            tasks = [(row, row_constraints, speed_constraints) for _, row in data_manager.observed_data.iterrows()]
+            results = list(tqdm(pool.imap(self._optimize_row, tasks), total=len(tasks), desc="Cleaning"))
+
+        # 将并行计算的结果合并到一个DataFrame中
+        cleaned_data = pd.DataFrame(results, index=data_manager.observed_data.index,
+                                    columns=data_manager.observed_data.columns)
+        return cleaned_data
+
+    def _optimize_row(self, task):
+        row, row_constraints, speed_constraints = task
+
+        # def objective_function(x):
+        #     score = 0
+        #
+        #     # 检测行约束违反情况
+        #     for _, coefs, rho_min, rho_max in row_constraints:
+        #         value = np.dot(coefs, x)
+        #         violation = max(0, rho_min - value, value - rho_max)
+        #         score += violation * violation  # 直接加权
+        #
+        #     # 加入x与原始行数据row的距离
+        #     distance = np.sum(np.abs(x - row.values))
+        #     score += distance  # 直接加权
+        #
+        #     return score
+
+        def objective_function(x):
+            score = 0
+            sigmoid = lambda z: 1 / (1 + np.exp(-z))
+
+            # 检测行约束违反情况
+            for _, coefs, rho_min, rho_max in row_constraints:
+                value = np.dot(coefs, x)
+
+                # 使用sigmoid函数处理上下界违反情况
+                violation_min = sigmoid(rho_min - value)
+                violation_max = sigmoid(value - rho_max)
+
+                # 即使没有违反，也考虑约束的存在
+                score += violation_min + violation_max
+
+            # 加入x与原始行数据row的距离
+            distance = np.sum(0.01 * np.abs(x - row.values))
+            # 使用sigmoid函数处理距离
+            score += sigmoid(distance)
+
+            return score
+
+        # 初始化搜索的起点为原始观测值
+        initial_guess = row.values
+
+        # 使用优化算法寻找最佳清洗值
+        result = minimize(objective_function, initial_guess, method='L-BFGS-B')
+        if result.success:
+            return result.x
+        else:
+            return row.values  # 优化失败时返回原始观测值
+
+    @staticmethod
+    def test_MTSCleanSoft():
+        # 加载数据
+        data_path = '../datasets/idf.csv'
+
+        # 初始化DataManager
+        data_manager = DataManager('idf', data_path)
+
+        # 使用 RowConstraintMiner 从 clean_data 中挖掘行约束
+        row_miner = RowConstraintMiner(data_manager.clean_data)
+        row_constraints, covered_attrs = row_miner.mine_row_constraints(attr_num=3)
+
+        # 使用 ColConstraintMiner 从 clean_data 中挖掘速度约束
+        col_miner = ColConstraintMiner(data_manager.clean_data)
+        speed_constraints, _ = col_miner.mine_col_constraints()
+
+        # 在DataManager中注入错误
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs)
+
+        # 计算清洗前数据的平均绝对误差
+        average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
+                                                                                        data_manager.observed_data)
+        print("清洗前数据的平均绝对误差：", average_absolute_diff_before)
+
+        # 检查数据是否违反了行约束
+        violations_count = data_utils.check_constraints_violations(data_manager.observed_data, row_constraints)
+        print(f"观测数据违反的行约束次数：{violations_count}")
+
+        # 创建MTSCleanSoft实例并清洗数据
+        mtsclean_soft = MTSCleanSoft()
+        cleaned_data = mtsclean_soft.clean(data_manager, row_constraints=row_constraints,
+                                           speed_constraints=speed_constraints)
+
+        # 计算清洗后数据的平均绝对误差
+        average_absolute_diff_after = data_utils.calculate_average_absolute_difference(cleaned_data,
+                                                                                       data_manager.clean_data)
+        print("清洗后数据的平均绝对误差：", average_absolute_diff_after)
+
+        # 检查数据是否违反了行约束
+        violations_count = data_utils.check_constraints_violations(cleaned_data, row_constraints)
+        print(f"清洗数据违反的行约束次数：{violations_count}")
+
+
 # 在适当的时候调用测试函数
 if __name__ == "__main__":
     # MTSCleanRow.test_MTSCleanRow()
     # MTSClean.test_MTSClean()
-    MTSCleanPareto.test_MTSCleanPareto()
+    # MTSCleanPareto.test_MTSCleanPareto()
+    MTSCleanSoft.test_MTSCleanSoft()

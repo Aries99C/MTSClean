@@ -1,4 +1,5 @@
 import numpy as np
+from tqdm import tqdm
 
 import data_utils
 from cleaning_algorithms.base_algorithm import BaseCleaningAlgorithm
@@ -43,7 +44,7 @@ class IMRClean(BaseCleaningAlgorithm):
     def clean(self, data_manager, **args):
         cleaned_data = data_manager.observed_data.copy()
 
-        for col in cleaned_data.columns:
+        for col in tqdm(cleaned_data.columns, desc="IMR Cleaning"):
             label_list = data_manager.is_label[col].values
             labels = data_manager.clean_data[col].values
             data = cleaned_data[col].values
@@ -85,6 +86,8 @@ class IMRClean(BaseCleaningAlgorithm):
             for i in range(size):
                 if not label_list[i]:
                     data[i] = data[i] + y_matrix[i - self.p, 0]
+                else:
+                    data[i] = labels[i]
 
         return cleaned_data
 

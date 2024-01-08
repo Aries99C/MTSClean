@@ -1,3 +1,5 @@
+import heapq
+
 import data_utils
 from cleaning_algorithms.base_algorithm import BaseCleaningAlgorithm
 from data_manager import DataManager  # 确保DataManager类能够被正确导入
@@ -76,7 +78,7 @@ class MTSCleanRow(BaseCleaningAlgorithm):
         constraints, covered_attrs = miner.mine_row_constraints(attr_num=3)
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs)
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], row_constraints=constraints)
 
         # 计算清洗前数据的平均绝对误差
         average_absolute_diff = data_utils.calculate_average_absolute_difference(data_manager.clean_data, data_manager.observed_data)
@@ -225,7 +227,7 @@ class MTSClean(BaseCleaningAlgorithm):
         speed_constraints, _ = col_miner.mine_col_constraints()
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs)
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], row_constraints=row_constraints)
 
         # 计算清洗前数据的平均绝对误差
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
@@ -345,7 +347,7 @@ class MTSCleanPareto(BaseCleaningAlgorithm):
         row_constraints, covered_attrs = row_miner.mine_row_constraints(attr_num=3)
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs)
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], row_constraints=row_constraints)
 
         # 计算清洗前数据的平均绝对误差
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,
@@ -374,76 +376,146 @@ class MTSCleanPareto(BaseCleaningAlgorithm):
 
 
 class MTSCleanSoft(BaseCleaningAlgorithm):
-    def __init__(self):
-        pass
-
     def clean(self, data_manager, **args):
         row_constraints = args.get('row_constraints')
         speed_constraints = args.get('speed_constraints')
 
-        # 检查约束
         if row_constraints is None or speed_constraints is None:
             raise ValueError("Row and speed constraints are required.")
 
-        # 使用进程池进行并行计算
-        with Pool() as pool:
-            tasks = [(row, row_constraints, speed_constraints) for _, row in data_manager.observed_data.iterrows()]
-            results = list(tqdm(pool.imap(self._optimize_row, tasks), total=len(tasks), desc="Cleaning"))
+        cleaned_data = pd.DataFrame(columns=data_manager.observed_data.columns)
+        previous_row = data_manager.observed_data.iloc[0].copy()
+        for index, current_row in tqdm(data_manager.observed_data.iterrows(), total=data_manager.observed_data.shape[0], desc="Cleaning"):
+            optimized_row = self._optimize_row(current_row, previous_row, row_constraints, speed_constraints)
+            cleaned_data.loc[index] = optimized_row
+            # 更新previous_row，确保数据类型保持一致
+            previous_row = pd.Series(optimized_row, index=current_row.index)
 
-        # 将并行计算的结果合并到一个DataFrame中
-        cleaned_data = pd.DataFrame(results, index=data_manager.observed_data.index,
-                                    columns=data_manager.observed_data.columns)
         return cleaned_data
 
-    def _optimize_row(self, task):
-        row, row_constraints, speed_constraints = task
+    def _optimize_row(self, current_row, previous_row, row_constraints, speed_constraints):
+        violated_constraints = self._check_constraints_violation(current_row, row_constraints)
 
-        # def objective_function(x):
-        #     score = 0
-        #
-        #     # 检测行约束违反情况
-        #     for _, coefs, rho_min, rho_max in row_constraints:
-        #         value = np.dot(coefs, x)
-        #         violation = max(0, rho_min - value, value - rho_max)
-        #         score += violation * violation  # 直接加权
-        #
-        #     # 加入x与原始行数据row的距离
-        #     distance = np.sum(np.abs(x - row.values))
-        #     score += distance  # 直接加权
-        #
-        #     return score
+        if not violated_constraints:
+            return current_row.values  # 没有违反的约束，无需优化
 
-        def objective_function(x):
-            score = 0
-            sigmoid = lambda z: 1 / (1 + np.exp(-z))
+        target_col_indices = self._find_min_cover_columns(current_row, previous_row, violated_constraints,
+                                                          speed_constraints)
 
-            # 检测行约束违反情况
-            for _, coefs, rho_min, rho_max in row_constraints:
-                value = np.dot(coefs, x)
+        # 对每个待修复列计算允许的范围
+        allowed_ranges = []
+        for col_index in target_col_indices:
+            # 找到与当前待修复列相关的行约束
+            relevant_constraints = [constraint for constraint in violated_constraints if constraint[1][col_index] != 0]
+            # 计算这些行约束的公共允许范围
+            common_min, common_max = 0, 30
+            for constraint in relevant_constraints:
+                min_val, max_val = self._calculate_allowed_range(current_row, constraint, col_index)
+                common_min = max(common_min, min_val)
+                common_max = min(common_max, max_val)
+            allowed_ranges.append((common_min, common_max))
 
-                # 使用sigmoid函数处理上下界违反情况
-                violation_min = sigmoid(rho_min - value)
-                violation_max = sigmoid(value - rho_max)
+        # 定义目标函数
+        objective_function = lambda x: self._objective_function(x, current_row, allowed_ranges, target_col_indices)
 
-                # 即使没有违反，也考虑约束的存在
-                score += violation_min + violation_max
-
-            # 加入x与原始行数据row的距离
-            distance = np.sum(0.01 * np.abs(x - row.values))
-            # 使用sigmoid函数处理距离
-            score += sigmoid(distance)
-
-            return score
-
-        # 初始化搜索的起点为原始观测值
-        initial_guess = row.values
+        # 初始化搜索的起点为原始观测值中的目标列
+        initial_guess = current_row.iloc[list(target_col_indices)].values
 
         # 使用优化算法寻找最佳清洗值
         result = minimize(objective_function, initial_guess, method='L-BFGS-B')
         if result.success:
-            return result.x
-        else:
-            return row.values  # 优化失败时返回原始观测值
+            optimized_values = result.x
+
+            # 将优化后的值更新到current_row中的目标列
+            current_row.iloc[list(target_col_indices)] = optimized_values
+
+        return current_row.values
+
+    def _calculate_speed_violation(self, current_value, previous_value, speed_constraint):
+        speed_lb, speed_ub = speed_constraint
+        speed = current_value - previous_value
+        if speed < speed_lb:
+            return abs(speed_lb - speed)
+        elif speed > speed_ub:
+            return abs(speed - speed_ub)
+        return 0
+
+    def _find_min_cover_columns(self, current_row, previous_row, row_constraints, speed_constraints):
+        # 初始化列的优先级队列
+        priority_queue = []
+
+        # 为每个列计算优先级
+        for col_index, col_name in enumerate(current_row.index):
+            speed_violation = self._calculate_speed_violation(current_row[col_name], previous_row[col_name], speed_constraints[col_name])
+            constraint_count = sum(1 for constraint in row_constraints if constraint[1][col_index] != 0)
+            priority = speed_violation * constraint_count
+            priority_queue.append((-priority, col_index))  # 使用负值，因为队列是最大堆
+
+        # 构建最小覆盖集合
+        heapq.heapify(priority_queue)
+        covered_constraints_count = 0
+        min_cover_cols = set()
+
+        while priority_queue and covered_constraints_count < len(row_constraints):
+            _, col_index = heapq.heappop(priority_queue)
+            min_cover_cols.add(col_index)
+            for constraint in row_constraints:
+                if constraint[1][col_index] != 0:
+                    covered_constraints_count += 1
+
+        return min_cover_cols
+
+    def _calculate_allowed_range(self, row, constraint, target_col_index):
+        _, coefs, rho_min, rho_max = constraint
+        sum_other = np.dot(np.concatenate((coefs[:target_col_index], coefs[target_col_index + 1:])),
+                           np.concatenate((row[:target_col_index], row[target_col_index + 1:])))
+        if coefs[target_col_index] != 0:
+            min_val = (rho_min - sum_other) / coefs[target_col_index]
+            max_val = (rho_max - sum_other) / coefs[target_col_index]
+
+            min_val = max(min_val, 0)  # 确保最小值不小于0
+            max_val = min(max_val, 30)  # 确保最大值不超过30
+            if min_val <= max_val:
+                return min_val, max_val
+            else:
+                return max_val, min_val  # 交换值以确保合理的范围
+        return 0, 30  # 如果当前列系数为0，则允许整个范围
+
+    def _check_constraints_violation(self, row, row_constraints):
+        violated_constraints = []
+        for constraint in row_constraints:
+            _, coefs, rho_min, rho_max = constraint
+            value = np.dot(coefs, row)
+            if value < rho_min or value > rho_max:
+                violated_constraints.append(constraint)
+        return violated_constraints
+
+    def _objective_function(self, x, current_row, allowed_ranges, target_col_indices):
+        score = 0
+        sigmoid = lambda z: 1 / (1 + np.exp(-z))
+
+        # 修复列的修复值与观测值的绝对差的权重
+        weight_diff = 0.01
+
+        # 行约束违反的权重
+        weight_violation = 10
+
+        # 创建从target_col_indices到x索引的映射
+        col_index_to_x_index = {col_index: i for i, col_index in enumerate(target_col_indices)}
+
+        # 修复列的修复值与观测值的绝对差
+        for col_index in target_col_indices:
+            x_index = col_index_to_x_index[col_index]
+            score += weight_diff * abs(x[x_index] - current_row.iloc[col_index])
+
+        # 行约束的允许范围内的违反代价
+        for col_index, (lower_bound, upper_bound) in zip(target_col_indices, allowed_ranges):
+            x_index = col_index_to_x_index[col_index]
+            if x[x_index] < lower_bound or x[x_index] > upper_bound:
+                violation = min(abs(x[x_index] - lower_bound), abs(x[x_index] - upper_bound))
+                score += weight_violation * sigmoid(violation)
+
+        return score
 
     @staticmethod
     def test_MTSCleanSoft():
@@ -462,7 +534,7 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
         speed_constraints, _ = col_miner.mine_col_constraints()
 
         # 在DataManager中注入错误
-        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs)
+        data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], row_constraints=row_constraints)
 
         # 计算清洗前数据的平均绝对误差
         average_absolute_diff_before = data_utils.calculate_average_absolute_difference(data_manager.clean_data,

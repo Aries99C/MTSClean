@@ -68,7 +68,6 @@ def calculate_correct_value_range(dm, coefs, rho_min, rho_max, col_index, start,
     return lower_bound, upper_bound
 
 
-
 def should_visualize_segment(dm, cleaned_results, col, start, end):
     mtsclean_error = calculate_segment_error(cleaned_results['MTSClean'][col], dm.clean_data[col], start, end)
 
@@ -157,7 +156,7 @@ def visualize_cleaning_results(data_manager):
     speed_constraints, accel_constraints = col_miner.mine_col_constraints()
 
     # 注入错误到观测数据中
-    data_manager.inject_errors(error_ratio=0.25, error_types=['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=covered_attrs)
+    data_manager.inject_errors(error_ratio=0.2, error_types=['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=covered_attrs, row_constraints=row_constraints)
 
     # 为 KalmanFilterClean 估计参数
     kalman_params = data_manager.estimate_kalman_parameters()

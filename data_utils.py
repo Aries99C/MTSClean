@@ -49,17 +49,17 @@ def create_hypergraph(data, row_constraints, speed_constraints, start_index, win
     #     hyperedge = [(i, col) for i in range(start_index, start_index + window - 1)]
     #     scenes[f'Speed_{col}'] = set(hyperedge)
 
-    # # 添加行约束为超边
-    # for i, row_constraint in enumerate(row_constraints):
-    #     # 仅考虑窗口内的行
-    #     for j in range(start_index, start_index + 1):
-    #         hyperedge = [(j, col) for coef_val, col in zip(row_constraint[1], window_data.columns) if coef_val != 0]
-    #         scenes[f'Row_{i}_{j}'] = set(hyperedge)
+    # 添加行约束为超边
+    for i, row_constraint in enumerate(row_constraints):
+        # 仅考虑窗口内的行
+        for j in range(start_index, start_index + 1):
+            hyperedge = [(j, col) for coef_val, col in zip(row_constraint[1], window_data.columns) if coef_val != 0]
+            scenes[f'Row_{i}_{j}'] = set(hyperedge)
 
     # 添加速度约束为超边
-    for col in window_data.columns:
-        hyperedge = [(i, col) for i in range(start_index, start_index + window - 1)]
-        scenes[f'Speed_{col}'] = set(hyperedge)
+    # for col in window_data.columns:
+    #     hyperedge = [(i, col) for i in range(start_index, start_index + window - 1)]
+    #     scenes[f'Speed_{col}'] = set(hyperedge)
 
     # 创建超图
     H = hnx.Hypergraph(scenes)
@@ -133,7 +133,7 @@ def test_hypergraph_on_idf_dataset():
     speed_constraints, _ = col_miner.mine_col_constraints()
 
     # 在DataManager中注入错误
-    data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs)
+    data_manager.inject_errors(0.2, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], row_constraints=row_constraints)
 
     # 从DataManager获取观测数据
     observed_data = data_manager.observed_data

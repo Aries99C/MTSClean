@@ -5,6 +5,8 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 
+from constraints import RowConstraintMiner
+
 
 class DataManager:
     def __init__(self, dataset, dataset_path, label_rate=0.1):
@@ -86,47 +88,50 @@ class DataManager:
             restored_data[col] = (restored_data[col] / scale_factor) + min_val
         return restored_data
 
-    def inject_errors(self, error_ratio, error_types, covered_attrs):
-        """
-        向数据中注入错误。
-        :param error_ratio: 错误注入的比例。
-        :param error_types: 要注入的错误类型列表。
-        :param covered_attrs: 可以注入错误的属性集合。
-        """
+    def inject_errors(self, error_ratio, error_types, covered_attrs=None, row_constraints=None):
         n_rows, _ = self.clean_data.shape
         total_errors = int(n_rows * error_ratio)
 
         while total_errors > 0:
             error_length = random.randint(30, 50)
-            if total_errors < error_length:  # 确保不超过剩余的错误数
+            if total_errors < error_length:
                 error_length = total_errors
 
-            start_row = random.randint(100, n_rows - error_length)  # 不在前100行添加噪声
-            if self.error_mask.iloc[start_row:start_row + error_length].any().any():
+            start_row = random.randint(100, n_rows - error_length)
+
+            if row_constraints:
+                # 从行约束中随机选择一个，并筛选出系数绝对值大于等于0.6的属性
+                _, coefs, _, _ = random.choice(row_constraints)
+                involved_cols = [col for col, coef in zip(self.clean_data.columns, coefs) if abs(coef) >= 0.6]
+                if not involved_cols:  # 如果没有符合条件的列，则选择下一个行约束
+                    continue
+            else:
+                # 如果没有行约束，从 covered_attrs 中选择列
+                involved_cols = covered_attrs
+
+            selected_col = random.choice(involved_cols)
+            if self.error_mask.iloc[start_row:start_row + error_length][selected_col].any():
                 continue
 
-            # 仅从 covered_attrs 中选择列进行错误注入
-            selected_cols = random.sample(list(covered_attrs), k=random.randint(1, min(3, len(covered_attrs))))
             error_type = random.choice(error_types)
-
+            self._inject_error(start_row, error_length, [selected_col], error_type)
             total_errors -= error_length
 
-            if error_type == 'drift':
-                self._inject_drift_error(start_row, error_length, selected_cols)
-            elif error_type == 'gaussian':
-                self._inject_gaussian_error(start_row, error_length, selected_cols)
-            elif error_type == 'volatility':
-                self._inject_volatility_error(start_row, error_length, selected_cols)
-            elif error_type == 'gradual':
-                self._inject_gradual_error(start_row, error_length, selected_cols)
-            elif error_type == 'sudden':
-                self._inject_sudden_error(start_row, error_length, selected_cols)
+        # 更新复原后的数据
+        self.restored_clean_data = self.restore_original_scale(self.clean_data)
+        self.restored_observed_data = self.restore_original_scale(self.observed_data)
 
-            total_errors -= error_length
-
-            # 在错误注入之后，更新复原后的数据
-            self.restored_clean_data = self.restore_original_scale(self.clean_data)
-            self.restored_observed_data = self.restore_original_scale(self.observed_data)
+    def _inject_error(self, start_row, length, col, error_type):
+        if error_type == 'drift':
+            self._inject_drift_error(start_row, length, col)
+        elif error_type == 'gaussian':
+            self._inject_gaussian_error(start_row, length, col)
+        elif error_type == 'volatility':
+            self._inject_volatility_error(start_row, length, col)
+        elif error_type == 'gradual':
+            self._inject_gradual_error(start_row, length, col)
+        elif error_type == 'sudden':
+            self._inject_sudden_error(start_row, length, col)
 
     def _inject_drift_error(self, start_row, length, cols):
         for col in cols:
@@ -193,7 +198,37 @@ class DataManager:
             self.error_mask.loc[start_row:start_row + length - 1, col] = True
 
 
-def plot_error_segments(dm, buffer=10):
+def calculate_value_range_for_constraint(row_data, constraint, target_col_index):
+    coefs, rho_min, rho_max = constraint
+    sum_other = np.dot(np.concatenate((coefs[:target_col_index], coefs[target_col_index + 1:])),
+                       np.concatenate((row_data[:target_col_index], row_data[target_col_index + 1:])))
+    if coefs[target_col_index] != 0:
+        min_val = (rho_min - sum_other) / coefs[target_col_index]
+        max_val = (rho_max - sum_other) / coefs[target_col_index]
+
+        min_val = max(min_val, 0)
+        max_val = min(max_val, 30)
+        if min_val < max_val:
+            return max(min_val, 0), min(max_val, 30)  # 确保范围在合理区间
+        else:
+            return max(max_val, 0), min(min_val, 30)  # 确保范围在合理区间
+    return 0, 30  # 如果当前列系数为0，则允许整个范围
+
+
+def find_common_range(dm, col, row_constraints, start, end):
+    col_index = dm.clean_data.columns.get_loc(col)
+    common_min, common_max = 0, 30
+    for constraint in row_constraints:
+        if constraint[0][col_index] != 0:  # 检查是否涉及当前列
+            for idx in range(start, end):
+                row_data = dm.clean_data.iloc[idx].values
+                min_val, max_val = calculate_value_range_for_constraint(row_data, constraint, col_index)
+                common_min = max(common_min, min_val)
+                common_max = min(common_max, max_val)
+    return common_min, common_max
+
+
+def plot_error_segments(dm, buffer=10, row_constraints=[]):
     """
     遍历并绘制每列上每段错误数据及其前后缓冲区的数据。
     :param dm: DataManager实例。
@@ -208,29 +243,24 @@ def plot_error_segments(dm, buffer=10):
                 start = i
             elif not error_locations[i] and start is not None:
                 end = i
-                plot_segment(dm, col, start, end, buffer)
+                plot_segment(dm, col, start, end, buffer, row_constraints)  # 传递行约束参数
                 start = None
         if start is not None:  # 处理最后一个错误段
-            plot_segment(dm, col, start, len(error_locations), buffer)
+            plot_segment(dm, col, start, end, buffer, row_constraints)  # 传递行约束参数
 
 
-def plot_segment(dm, col, start, end, buffer):
-    """
-    绘制特定列上的错误段及其周围的数据。
-    :param dm: DataManager实例。
-    :param col: 列名。
-    :param start: 错误段开始位置。
-    :param end: 错误段结束位置。
-    :param buffer: 在错误数据前后额外包含的行数。
-    """
-    start = max(0, start - buffer)
-    end = min(len(dm.clean_data), end + buffer)
+def plot_segment(dm, col, start, end, buffer, row_constraints):
+    plot_start = max(0, start - buffer)
+    plot_end = min(len(dm.clean_data), end + buffer)
+
+    common_min, common_max = find_common_range(dm, col, row_constraints, plot_start, plot_end)
 
     plt.figure(figsize=(10, 4))
-    plt.plot(dm.restored_clean_data[col][start:end], label='Restored Clean Data', color='blue')
-    plt.plot(dm.restored_observed_data[col][start:end], label='Restored Observed Data', color='orange')
-    plt.axvline(x=start + buffer - 1, color='green', linestyle='--', label='Error Start')
-    plt.axvline(x=end - buffer, color='red', linestyle='--', label='Error End')
+    plt.plot(dm.clean_data[col][plot_start:plot_end], label='Clean Data', color='blue')
+    plt.plot(dm.observed_data[col][plot_start:plot_end], label='Observed Data', color='orange')
+    plt.fill_between(range(plot_start, plot_end), common_min, common_max, color='yellow', alpha=0.3, label='Allowed Range')
+    plt.axvline(x=start, color='green', linestyle='--', label='Error Start')
+    plt.axvline(x=end - 1, color='red', linestyle='--', label='Error End')
     plt.title(f'Error Segment in Column {col}')
     plt.legend()
     plt.show()
@@ -238,59 +268,18 @@ def plot_segment(dm, col, start, end, buffer):
 
 if __name__ == '__main__':
     dm = DataManager('idf', 'datasets/idf.csv')
-    dm.inject_errors(0.1, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=dm.clean_data.columns)
+
+    # 使用 RowConstraintMiner 挖掘行约束
+    row_miner = RowConstraintMiner(dm.clean_data)
+    row_constraints, _ = row_miner.mine_row_constraints(attr_num=3)
+
+    # for constraint in row_constraints:
+    #     print(constraint[0])
+
+    dm.inject_errors(0.1, ['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], row_constraints=row_constraints)
+
+    # 调整行约束格式（去除字符串描述，只保留系数和范围）
+    formatted_row_constraints = [(constraint[1], constraint[2], constraint[3]) for constraint in row_constraints]
 
     # 绘制每个错误段数据
-    plot_error_segments(dm, buffer=10)
-
-    # 绘制复原后的数据对比
-    n_cols = len(dm.restored_clean_data.columns)
-    cols_per_group = 5
-
-    for i in range(0, n_cols, cols_per_group):
-        end = min(i + cols_per_group, n_cols)
-        plt.figure(figsize=(12, 10))
-
-        for j, col in enumerate(dm.restored_clean_data.columns[i:end]):
-            # 绘制复原后的clean_data
-            plt.subplot(cols_per_group, 2, 2 * j + 1)
-            plt.plot(dm.restored_clean_data[col], label='Restored Clean Data', color='blue')
-            plt.title(f'Restored Clean Data - {col}')
-            plt.legend()
-
-            # 绘制复原后的observed_data
-            plt.subplot(cols_per_group, 2, 2 * j + 2)
-            plt.plot(dm.restored_observed_data[col], label='Restored Observed Data', color='orange')
-            plt.title(f'Restored Observed Data - {col}')
-            plt.legend()
-
-        plt.tight_layout()
-        plt.show()
-
-    # 绘制调整量纲后的数据对比
-    # dm = DataManager('idf', 'datasets/idf.csv')
-    # dm.inject_errors(0.1, ['drift', 'gaussian', 'volatility'])
-    #
-    # # 将列分为每组5列，并为每组绘制图表（左侧clean_data，右侧observed_data）
-    # n_cols = len(dm.clean_data.columns)
-    # cols_per_group = 5
-    #
-    # for i in range(0, n_cols, cols_per_group):
-    #     end = min(i + cols_per_group, n_cols)
-    #     plt.figure(figsize=(12, 10))  # 调整窗口大小
-    #
-    #     for j, col in enumerate(dm.clean_data.columns[i:end]):
-    #         # 绘制clean_data
-    #         plt.subplot(cols_per_group, 2, 2*j+1)
-    #         plt.plot(dm.clean_data[col], label='Clean Data', color='blue')
-    #         plt.title(f'Clean Data - {col}')
-    #         plt.legend()
-    #
-    #         # 绘制observed_data
-    #         plt.subplot(cols_per_group, 2, 2*j+2)
-    #         plt.plot(dm.observed_data[col], label='Observed Data', color='orange')
-    #         plt.title(f'Observed Data - {col}')
-    #         plt.legend()
-    #
-    #     plt.tight_layout()
-    #     plt.show()
+    plot_error_segments(dm, buffer=10, row_constraints=formatted_row_constraints)

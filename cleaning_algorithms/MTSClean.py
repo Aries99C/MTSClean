@@ -405,9 +405,7 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
         # 对每个待修复列计算允许的范围
         allowed_ranges = []
         for col_index in target_col_indices:
-            # 找到与当前待修复列相关的行约束
             relevant_constraints = [constraint for constraint in violated_constraints if constraint[1][col_index] != 0]
-            # 计算这些行约束的公共允许范围
             common_min, common_max = 0, 30
             for constraint in relevant_constraints:
                 min_val, max_val = self._calculate_allowed_range(current_row, constraint, col_index)
@@ -419,15 +417,19 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
         objective_function = lambda x: self._objective_function(x, current_row, allowed_ranges, target_col_indices)
 
         # 初始化搜索的起点为原始观测值中的目标列
-        initial_guess = current_row.iloc[list(target_col_indices)].values
+        # initial_guess = current_row.iloc[list(target_col_indices)].values
+        initial_guess = [np.mean([min_val, max_val]) for min_val, max_val in allowed_ranges]
 
         # 使用优化算法寻找最佳清洗值
         result = minimize(objective_function, initial_guess, method='L-BFGS-B')
         if result.success:
             optimized_values = result.x
+        else:
+            # 如果优化失败，使用allowed_ranges的上下界均值作为替代值
+            optimized_values = [np.mean([min_val, max_val]) for min_val, max_val in allowed_ranges]
 
-            # 将优化后的值更新到current_row中的目标列
-            current_row.iloc[list(target_col_indices)] = optimized_values
+        # 将优化后的值或均值替代更新到current_row中的目标列
+        current_row.iloc[list(target_col_indices)] = optimized_values
 
         return current_row.values
 
@@ -466,7 +468,7 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
             # 打印或记录选中的列索引和列名
             selected_cols = [current_row.index[col_index] for col_index in min_cover_cols]
             current_row_index = current_row.name  # 获取当前行的索引
-            print(f"Row {current_row_index}: Selected columns for repair:", selected_cols)
+            # print(f"Row {current_row_index}: Selected columns for repair:", selected_cols)
             return min_cover_cols
 
     def _calculate_allowed_range(self, row, constraint, target_col_index):
@@ -481,12 +483,12 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
             min_val = max(min_val, 0)  # 确保最小值不小于0
             max_val = min(max_val, 30)  # 确保最大值不超过30
             if min_val <= max_val:
-                print(f"Allowed range for column {target_col_index}: {min_val} to {max_val}. Observed: {row.iloc[target_col_index]}")
+                # print(f"Allowed range for column {target_col_index}: {min_val} to {max_val}. Observed: {row.iloc[target_col_index]}")
                 return min_val, max_val
             else:
-                print(f"Invalid range for column {target_col_index}: {max_val} to {min_val}. Observed: {row.iloc[target_col_index]}")
+                # print(f"Invalid range for column {target_col_index}: {max_val} to {min_val}. Observed: {row.iloc[target_col_index]}")
                 return max_val, min_val  # 交换值以确保合理的范围
-        print(f"No constraint on column {target_col_index}: Allowed full range. Observed: {row[target_col_index]}")
+        # print(f"No constraint on column {target_col_index}: Allowed full range. Observed: {row[target_col_index]}")
         return 0, 30  # 如果当前列系数为0，则允许整个范围
 
     def _check_constraints_violation(self, row, row_constraints):

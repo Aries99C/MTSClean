@@ -463,7 +463,11 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
                 if constraint[1][col_index] != 0:
                     covered_constraints_count += 1
 
-        return min_cover_cols
+            # 打印或记录选中的列索引和列名
+            selected_cols = [current_row.index[col_index] for col_index in min_cover_cols]
+            current_row_index = current_row.name  # 获取当前行的索引
+            print(f"Row {current_row_index}: Selected columns for repair:", selected_cols)
+            return min_cover_cols
 
     def _calculate_allowed_range(self, row, constraint, target_col_index):
         _, coefs, rho_min, rho_max = constraint
@@ -473,12 +477,16 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
             min_val = (rho_min - sum_other) / coefs[target_col_index]
             max_val = (rho_max - sum_other) / coefs[target_col_index]
 
+            # 确保范围是有意义的
             min_val = max(min_val, 0)  # 确保最小值不小于0
             max_val = min(max_val, 30)  # 确保最大值不超过30
             if min_val <= max_val:
+                print(f"Allowed range for column {target_col_index}: {min_val} to {max_val}. Observed: {row.iloc[target_col_index]}")
                 return min_val, max_val
             else:
+                print(f"Invalid range for column {target_col_index}: {max_val} to {min_val}. Observed: {row.iloc[target_col_index]}")
                 return max_val, min_val  # 交换值以确保合理的范围
+        print(f"No constraint on column {target_col_index}: Allowed full range. Observed: {row[target_col_index]}")
         return 0, 30  # 如果当前列系数为0，则允许整个范围
 
     def _check_constraints_violation(self, row, row_constraints):
@@ -492,13 +500,12 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
 
     def _objective_function(self, x, current_row, allowed_ranges, target_col_indices):
         score = 0
-        sigmoid = lambda z: 1 / (1 + np.exp(-z))
 
         # 修复列的修复值与观测值的绝对差的权重
-        weight_diff = 0.01
+        weight_diff = 0.3
 
         # 行约束违反的权重
-        weight_violation = 10
+        weight_violation = 0.7
 
         # 创建从target_col_indices到x索引的映射
         col_index_to_x_index = {col_index: i for i, col_index in enumerate(target_col_indices)}
@@ -511,9 +518,8 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
         # 行约束的允许范围内的违反代价
         for col_index, (lower_bound, upper_bound) in zip(target_col_indices, allowed_ranges):
             x_index = col_index_to_x_index[col_index]
-            if x[x_index] < lower_bound or x[x_index] > upper_bound:
-                violation = min(abs(x[x_index] - lower_bound), abs(x[x_index] - upper_bound))
-                score += weight_violation * sigmoid(violation)
+            mid_point = (lower_bound + upper_bound) / 2
+            score += weight_violation * abs(x[x_index] - mid_point)
 
         return score
 

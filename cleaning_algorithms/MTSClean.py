@@ -119,8 +119,7 @@ class MTSClean(BaseCleaningAlgorithm):
             raise ValueError("Speed constraints are required for secondary cleaning.")
 
         # 计算总的迭代次数
-        total_steps = data_manager.observed_data.shape[0] + data_manager.observed_data.shape[0] * len(
-            data_manager.observed_data.columns)
+        total_steps = data_manager.observed_data.shape[0] + data_manager.observed_data.shape[0] * data_manager.observed_data.shape[1]
         with tqdm(total=total_steps, desc="Total Cleaning Progress") as pbar:
             # 先进行行约束清洗
             cleaned_data = self._clean_with_row_constraints(data_manager.observed_data, row_constraints, pbar)
@@ -158,55 +157,35 @@ class MTSClean(BaseCleaningAlgorithm):
 
         return pd.DataFrame(cleaned_data, columns=data.columns)
 
-    def _clean_with_speed_constraints(self, data, speed_constraints, pbar):
-        n_rows = data.shape[0]
-        cleaned_data = data.copy()
+    def _clean_with_speed_constraints(self, lp_cleaned_data, speed_constraints, pbar):
+        w = 10  # 窗口长度
 
-        chunk_length = 50
-        overlap = 10
+        # 创建清洗后的数据副本
+        cleaned_data = lp_cleaned_data.copy()
 
-        for col in data.columns:
-            speed_lb, speed_ub = speed_constraints[col]
-            x = data[col].values
+        for col in cleaned_data.columns:
+            # 获取当前列的速度约束上下界
+            speed_lb = speed_constraints[col][0]
+            speed_ub = speed_constraints[col][1]
+            data = lp_cleaned_data[col].values
 
-            for start in range(0, n_rows, chunk_length - overlap):
-                end = min(start + chunk_length, n_rows)
-                chunk = x[start:end]
+            for i in range(1, len(data) - 1):
+                x_i_min = speed_lb + data[i - 1]
+                x_i_max = speed_ub + data[i - 1]
+                candidate_i = [data[i]]
+                for k in range(i + 1, len(data)):
+                    if k > i + w:
+                        break
+                    candidate_i.append(speed_lb + data[k])
+                    candidate_i.append(speed_ub + data[k])
+                candidate_i = np.array(candidate_i)
+                x_i_mid = np.median(candidate_i)
+                if x_i_mid < x_i_min:
+                    cleaned_data.at[i, col] = x_i_min
+                elif x_i_mid > x_i_max:
+                    cleaned_data.at[i, col] = x_i_max
 
-                # 构建线性规划的目标函数和约束
-                c = np.ones(len(chunk) * 2)
-                A_ub = []
-                b_ub = []
-                for i in range(len(chunk) - 1):
-                    for j in range(i + 1, len(chunk)):
-                        row_diff = j - i
-
-                        A_row = np.zeros(len(chunk) * 2)
-                        A_row[i] = -1
-                        A_row[j] = 1
-                        A_row[len(chunk) + i] = 1
-                        A_row[len(chunk) + j] = -1
-                        A_ub.append(A_row)
-                        b_ub.append(speed_ub * row_diff - (chunk[j] - chunk[i]))
-
-                        A_row = np.zeros(len(chunk) * 2)
-                        A_row[i] = 1
-                        A_row[j] = -1
-                        A_row[len(chunk) + i] = -1
-                        A_row[len(chunk) + j] = 1
-                        A_ub.append(A_row)
-                        b_ub.append(-speed_lb * row_diff + (chunk[j] - chunk[i]))
-
-                bounds = [(0, None) for _ in range(len(chunk) * 2)]
-                result = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds)
-
-                if result.success:
-                    cleaned_chunk = result.x[:len(chunk)] - result.x[len(chunk):] + chunk
-                    cleaned_data[col].iloc[start:end] = cleaned_chunk
-                else:
-                    print(f"线性规划求解失败于列 {col}, 数据块 {start}-{end}: {result.message}")
-
-            pbar.update(n_rows)  # 更新进度条，这里每次更新相当于完成了一整列的处理
+            pbar.update(len(lp_cleaned_data))
 
         return cleaned_data
 
@@ -405,7 +384,9 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
         # 对每个待修复列计算允许的范围
         allowed_ranges = []
         for col_index in target_col_indices:
+            # 找到与当前待修复列相关的行约束
             relevant_constraints = [constraint for constraint in violated_constraints if constraint[1][col_index] != 0]
+            # 计算这些行约束的公共允许范围
             common_min, common_max = 0, 30
             for constraint in relevant_constraints:
                 min_val, max_val = self._calculate_allowed_range(current_row, constraint, col_index)
@@ -418,18 +399,20 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
 
         # 初始化搜索的起点为原始观测值中的目标列
         # initial_guess = current_row.iloc[list(target_col_indices)].values
-        initial_guess = [np.mean([min_val, max_val]) for min_val, max_val in allowed_ranges]
+        initial_guess = np.array([(common_min + common_max) / 2 for common_min, common_max in allowed_ranges])
+
+        print(f'从点{[(current_row.iloc[col_index], (allowed_ranges[i][0] + allowed_ranges[i][1]) / 2) for i, col_index in enumerate(target_col_indices)]}出发开始搜索')
 
         # 使用优化算法寻找最佳清洗值
         result = minimize(objective_function, initial_guess, method='L-BFGS-B')
         if result.success:
-            optimized_values = result.x
+            # current_row.iloc[list(target_col_indices)] = result.x
+            current_row.iloc[list(target_col_indices)] = [(common_min + common_max) / 2 for common_min, common_max in allowed_ranges]
         else:
-            # 如果优化失败，使用allowed_ranges的上下界均值作为替代值
-            optimized_values = [np.mean([min_val, max_val]) for min_val, max_val in allowed_ranges]
+            # 将优化后的值更新到current_row中的目标列
+            current_row.iloc[list(target_col_indices)] = [(common_min + common_max) / 2 for common_min, common_max in allowed_ranges]
 
-        # 将优化后的值或均值替代更新到current_row中的目标列
-        current_row.iloc[list(target_col_indices)] = optimized_values
+        print(f'搜索结果{current_row.iloc[list(target_col_indices)]}')
 
         return current_row.values
 
@@ -448,9 +431,9 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
 
         # 为每个列计算优先级
         for col_index, col_name in enumerate(current_row.index):
-            speed_violation = self._calculate_speed_violation(current_row[col_name], previous_row[col_name], speed_constraints[col_name])
-            constraint_count = sum(1 for constraint in row_constraints if constraint[1][col_index] != 0)
-            priority = speed_violation * constraint_count
+            # speed_violation = self._calculate_speed_violation(current_row[col_name], previous_row[col_name], speed_constraints[col_name])
+            speed_violation = abs(current_row[col_name] - previous_row[col_name])
+            priority = speed_violation
             priority_queue.append((-priority, col_index))  # 使用负值，因为队列是最大堆
 
         # 构建最小覆盖集合
@@ -465,11 +448,7 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
                 if constraint[1][col_index] != 0:
                     covered_constraints_count += 1
 
-            # 打印或记录选中的列索引和列名
-            selected_cols = [current_row.index[col_index] for col_index in min_cover_cols]
-            current_row_index = current_row.name  # 获取当前行的索引
-            # print(f"Row {current_row_index}: Selected columns for repair:", selected_cols)
-            return min_cover_cols
+        return min_cover_cols
 
     def _calculate_allowed_range(self, row, constraint, target_col_index):
         _, coefs, rho_min, rho_max = constraint
@@ -479,16 +458,10 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
             min_val = (rho_min - sum_other) / coefs[target_col_index]
             max_val = (rho_max - sum_other) / coefs[target_col_index]
 
-            # 确保范围是有意义的
-            min_val = max(min_val, 0)  # 确保最小值不小于0
-            max_val = min(max_val, 30)  # 确保最大值不超过30
             if min_val <= max_val:
-                # print(f"Allowed range for column {target_col_index}: {min_val} to {max_val}. Observed: {row.iloc[target_col_index]}")
-                return min_val, max_val
+                return max(min_val, 0), min(max_val, 30)
             else:
-                # print(f"Invalid range for column {target_col_index}: {max_val} to {min_val}. Observed: {row.iloc[target_col_index]}")
-                return max_val, min_val  # 交换值以确保合理的范围
-        # print(f"No constraint on column {target_col_index}: Allowed full range. Observed: {row[target_col_index]}")
+                return max(max_val, 0), min(min_val, 30)  # 交换值以确保合理的范围
         return 0, 30  # 如果当前列系数为0，则允许整个范围
 
     def _check_constraints_violation(self, row, row_constraints):
@@ -502,12 +475,13 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
 
     def _objective_function(self, x, current_row, allowed_ranges, target_col_indices):
         score = 0
+        sigmoid = lambda z: 1 / (1 + np.exp(-z))
 
         # 修复列的修复值与观测值的绝对差的权重
-        weight_diff = 0.3
+        weight_diff = 0.1
 
         # 行约束违反的权重
-        weight_violation = 0.7
+        weight_violation = 0.9
 
         # 创建从target_col_indices到x索引的映射
         col_index_to_x_index = {col_index: i for i, col_index in enumerate(target_col_indices)}
@@ -520,8 +494,9 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
         # 行约束的允许范围内的违反代价
         for col_index, (lower_bound, upper_bound) in zip(target_col_indices, allowed_ranges):
             x_index = col_index_to_x_index[col_index]
-            mid_point = (lower_bound + upper_bound) / 2
-            score += weight_violation * abs(x[x_index] - mid_point)
+            if x[x_index] < lower_bound or x[x_index] > upper_bound:
+                # violation = min(abs(x[x_index] - lower_bound), abs(x[x_index] - upper_bound))
+                score += weight_violation * abs(x[x_index] - (upper_bound + lower_bound) / 2)
 
         return score
 

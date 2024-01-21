@@ -12,6 +12,13 @@ import geatpy as ea
 from tqdm import tqdm
 from multiprocessing import Pool
 
+import cProfile
+import pstats
+
+
+profiler = cProfile.Profile()
+profiler.enable()
+
 
 class MTSCleanRow(BaseCleaningAlgorithm):
     def __init__(self):
@@ -374,37 +381,44 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
         row, row_constraints, speed_constraints = task
 
         def check_violations(x):
-            for _, coefs, rho_min, rho_max in row_constraints:
+            violations = []
+            for i, (_, coefs, rho_min, rho_max) in enumerate(row_constraints):
                 value = np.dot(coefs, x)
-                if value < rho_min or value > rho_max:
-                    return True  # 存在违反的情况
-            # 检查速度约束（这里您需要根据实际情况添加适当的检查逻辑）
-            # ...（速度约束的检查代码）
-            return False  # 所有约束都被满足
+                if value < rho_min:
+                    violations.append((i, 'min'))  # 记录违反下界的约束
+                elif value > rho_max:
+                    violations.append((i, 'max'))  # 记录违反上界的约束
+            return violations
 
-        # 先检查是否有违反的约束
-        if not check_violations(row.values):
-            return row.values  # 如果没有违反的约束，直接返回原始行数据
+        # 获取违反的约束
+        violations = check_violations(row.values)
+
+        # 如果没有违反的约束，直接返回原始行数据
+        if not violations:
+            return row.values
 
         def objective_function(x):
             score = 0
             sigmoid = lambda z: 1 / (1 + np.exp(-z))
 
-            # 检测行约束违反情况
-            for _, coefs, rho_min, rho_max in row_constraints:
+            for i, (_, coefs, rho_min, rho_max) in enumerate(row_constraints):
                 value = np.dot(coefs, x)
-
-                # 使用sigmoid函数处理上下界违反情况
                 violation_min = sigmoid(rho_min - value)
                 violation_max = sigmoid(value - rho_max)
 
-                # 即使没有违反，也考虑约束的存在
-                score += violation_min + violation_max
+                if (i, 'min') in violations:
+                    # 对于违反下界的约束，增加对应的权重
+                    score += 1.5 * violation_min + violation_max
+                elif (i, 'max') in violations:
+                    # 对于违反上界的约束，增加对应的权重
+                    score += 1.5 * violation_max + violation_min
+                else:
+                    # 对于未违反的约束，减少权重
+                    score += violation_min + violation_max
 
-            # 加入x与原始行数据row的距离
-            distance = np.sum(0.01 * np.abs(x - row.values))
-            # 使用sigmoid函数处理距离
-            score += sigmoid(distance)
+            # 计算x与原始行数据row的距离
+            distance = np.sum(0.005 * np.abs(x - row.values))
+            score += sigmoid(distance)  # 使用sigmoid函数处理距离
 
             return score
 

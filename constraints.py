@@ -99,15 +99,20 @@ class RowConstraintMiner:
 
             # 准备系数数组
             full_coef = np.zeros(self.df.shape[1])
-            full_coef[[self.df.columns.get_loc(col) for col in selected_columns.drop(y_column)]] = new_model.coef_
+            for col in selected_columns.drop(y_column):
+                full_coef[self.df.columns.get_loc(col)] = new_model.coef_[X.columns.get_loc(col)]
             full_coef[self.df.columns.get_loc(y_column)] = -1
+
+            # 更新covered_attrs，只包括系数为-1的列
+            for col, coef in zip(self.df.columns, full_coef):
+                if coef == -1:
+                    covered_attrs.add(col)
 
             # 构建约束字符串，只包括非零系数的项
             terms = [f"{coef_val:.3f} * {col}" for coef_val, col in zip(full_coef, self.df.columns) if coef_val != 0]
             constraint_str = f"{rho_min:.3f} <= {' + '.join(terms)} <= {rho_max:.3f}"
 
             constraints.append((constraint_str, full_coef, rho_min, rho_max))
-            covered_attrs.update(selected_columns)
 
         return constraints, covered_attrs
 

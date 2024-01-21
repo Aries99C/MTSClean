@@ -10,6 +10,8 @@ from cleaning_algorithms.SCREEN import LocalSpeedClean, GlobalSpeedClean, LocalS
 from cleaning_algorithms.Smooth import EWMAClean, MedianFilterClean, KalmanFilterClean
 from cleaning_algorithms.IMR import IMRClean
 # ... 导入其他所需模块 ...
+import warnings
+warnings.filterwarnings("ignore")
 
 
 def plot_segment(dm, col, start, end, buffer, cleaned_results, row_constraints):
@@ -118,7 +120,8 @@ def plot_error_segments(dm, buffer, cleaned_results, row_constraints):
                 start = i
             elif not error_locations[i] and start is not None:
                 end = i
-                if should_visualize_segment(dm, cleaned_results, col, start, end):
+                # if should_visualize_segment(dm, cleaned_results, col, start, end):
+                if True:
                     fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results, row_constraints)
                     plt.show()  # 显示图表
 
@@ -134,7 +137,8 @@ def plot_error_segments(dm, buffer, cleaned_results, row_constraints):
 
         if start is not None:
             end = len(error_locations)
-            if should_visualize_segment(dm, cleaned_results, col, start, end):
+            # if should_visualize_segment(dm, cleaned_results, col, start, end):
+            if True:
                 fig, ax = plot_segment(dm, col, start, end, buffer, cleaned_results, row_constraints)
                 plt.show()  # 显示图表
 
@@ -152,11 +156,15 @@ def visualize_cleaning_results(data_manager):
     row_miner = RowConstraintMiner(data_manager.clean_data)
     row_constraints, covered_attrs = row_miner.mine_row_constraints()
 
+    for row_constraint in row_constraints:
+        print(row_constraint[0])
+
     col_miner = ColConstraintMiner(data_manager.clean_data)
     speed_constraints, accel_constraints = col_miner.mine_col_constraints()
 
     # 注入错误到观测数据中
-    data_manager.inject_errors(error_ratio=0.2, error_types=['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=covered_attrs, row_constraints=row_constraints)
+    # data_manager.inject_errors(error_ratio=0.25, error_types=['drift', 'gaussian', 'volatility', 'gradual', 'sudden'], covered_attrs=covered_attrs)
+    data_manager.inject_errors(error_ratio=0.25, error_types=['drift', 'gradual', 'sudden'], covered_attrs=covered_attrs)
 
     # 为 KalmanFilterClean 估计参数
     kalman_params = data_manager.estimate_kalman_parameters()
@@ -177,7 +185,6 @@ def visualize_cleaning_results(data_manager):
         # ... 添加其他清洗算法 ...
     }
 
-    errors_names = []
     errors = []
     cleaned_results = {}
 
@@ -194,13 +201,12 @@ def visualize_cleaning_results(data_manager):
 
         cleaned_results[name] = cleaned_data
         error = calculate_average_absolute_difference(cleaned_data, data_manager.clean_data)
-        errors_names.append(name)
         errors.append(error)
 
     # 可视化平均绝对误差
     plt.figure(figsize=(12, 6))
     colors = plt.cm.viridis(np.linspace(0, 1, len(algorithms)))
-    plt.bar(errors_names, errors, color=colors)
+    plt.bar(algorithms.keys(), errors, color=colors)
     plt.xlabel('Cleaning Algorithms')
     plt.ylabel('Average Absolute Error')
     plt.title('Comparison of Cleaning Algorithms')

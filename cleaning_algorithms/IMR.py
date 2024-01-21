@@ -7,7 +7,7 @@ from data_manager import DataManager
 
 
 class IMRClean(BaseCleaningAlgorithm):
-    def __init__(self, p=3, threshold=0.1, max_iter=1000):
+    def __init__(self, p=3, threshold=0.1, max_iter=10000):
         # IMR模型参数
         self.p = p
         self.threshold = threshold

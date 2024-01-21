@@ -48,17 +48,13 @@ class RowConstraintMiner:
         return models_with_loss
 
     def select_optimal_models(self, models_with_loss):
+        # 初始化一个记录属性被选中次数的字典
         attr_selected_count = {col: 0 for col in self.df.columns}
 
         selected_models = []
         for binary_string, y_column, model, loss in models_with_loss:
-            involved_attrs = self.df.columns[binary_string == 1]
-
-            # 根据涉及的属性计算方差比例阈值
-            var_ratio_threshold = np.mean(self.df[involved_attrs].var()) * 0.1  # 例如使用方差的10%作为阈值
-
-            # 检查模型的均方误差是否低于动态阈值
-            if loss > var_ratio_threshold:
+            # 检查模型的平均绝对误差是否在阈值以下
+            if loss > 0.05:
                 continue
 
             # 确定当前模型涉及的属性
@@ -73,7 +69,7 @@ class RowConstraintMiner:
                 [attr_selected_count[col] for col in involved_attrs if attr_selected_count[col] > 0], default=0)
 
             # 根据规则判断是否添加当前模型
-            if overlap_count <= 1 and unique_overlap_selected_count <= 3:
+            if overlap_count <= 1 and unique_overlap_selected_count < 3:
                 selected_models.append((binary_string, y_column, model, loss))
                 # 更新属性被选中次数
                 for attr in involved_attrs:

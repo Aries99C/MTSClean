@@ -408,16 +408,16 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
 
                 if (i, 'min') in violations:
                     # 对于违反下界的约束，增加对应的权重
-                    score += 1.5 * violation_min + violation_max
+                    score += 1.35 * violation_min + 1.2 * violation_max
                 elif (i, 'max') in violations:
                     # 对于违反上界的约束，增加对应的权重
-                    score += 1.5 * violation_max + violation_min
+                    score += 1.35 * violation_max + 1.2 * violation_min
                 else:
                     # 对于未违反的约束，减少权重
-                    score += violation_min + violation_max
+                    score += 1.0 * violation_min + 1.0 * violation_max
 
             # 计算x与原始行数据row的距离
-            distance = np.sum(0.005 * np.abs(x - row.values))
+            distance = np.sum(0.001 * np.abs(x - row.values))
             score += sigmoid(distance)  # 使用sigmoid函数处理距离
 
             return score

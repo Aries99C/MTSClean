@@ -97,7 +97,7 @@ class DataManager:
         total_errors = int(n_rows * error_ratio)
 
         while total_errors > 0:
-            error_length = random.randint(30, 50)
+            error_length = random.randint(10, 15)
             if total_errors < error_length:  # 确保不超过剩余的错误数
                 error_length = total_errors
 
@@ -132,10 +132,7 @@ class DataManager:
     def _inject_drift_error(self, start_row, length, cols):
         for col in cols:
             # 随机选择漂移值的范围
-            if random.choice([True, False]):
-                drift_value = random.uniform(-4, -2)
-            else:
-                drift_value = random.uniform(2, 4)
+            drift_value = 6
 
             temp_values = self.observed_data.loc[start_row:start_row+length-1, col] + drift_value
             # 确保数据在0到30的范围内
@@ -167,7 +164,7 @@ class DataManager:
         for col in cols:
             # 随机选择错误的增减方向和最终幅度
             direction = random.choice([-1, 1])
-            magnitude = random.uniform(5, 10) * direction
+            magnitude = 6 * direction
             # 创建一个渐变的错误向量
             gradual_change = np.linspace(0, magnitude, length)
             # 在错误的最后一行进行迅速恢复
@@ -181,7 +178,7 @@ class DataManager:
         for col in cols:
             # 随机选择错误的增减方向和最终幅度
             direction = random.choice([-1, 1])
-            magnitude = random.uniform(5, 10) * direction
+            magnitude = 6 * direction
             # 创建一个突变的错误向量
             sudden_change = np.full(length, magnitude)
             # 计算恢复阶段的长度

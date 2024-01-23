@@ -1,3 +1,5 @@
+import time
+
 import data_utils
 from cleaning_algorithms.base_algorithm import BaseCleaningAlgorithm
 from data_manager import DataManager  # 确保DataManager类能够被正确导入
@@ -112,6 +114,20 @@ class MTSClean(BaseCleaningAlgorithm):
     def __init__(self):
         pass
 
+    def _check_row_violations(self, row, constraints):
+        """
+        检查行是否违反约束。
+
+        :param row: Series, 行数据
+        :param constraints: list, 约束条件列表
+        :return: bool, 是否违反约束
+        """
+        for _, coefs, rho_min, rho_max in constraints:
+            value = np.dot(coefs, row)
+            if value < rho_min or value > rho_max:
+                return True  # 违反约束
+        return False  # 未违反任何约束
+
     def clean(self, data_manager, **args):
         # 从args中获取行约束和速度约束
         row_constraints = args.get('row_constraints')
@@ -124,13 +140,14 @@ class MTSClean(BaseCleaningAlgorithm):
             raise ValueError("Speed constraints are required for secondary cleaning.")
 
         # 计算总的迭代次数
-        # total_steps = data_manager.observed_data.shape[0] + data_manager.observed_data.shape[0] * len(data_manager.observed_data.columns)
-        total_steps = data_manager.observed_data.shape[0]
-        with tqdm(total=total_steps, desc="Total Cleaning Progress") as pbar:
+        total_steps = data_manager.observed_data.shape[0] + data_manager.observed_data.shape[0] * len(data_manager.observed_data.columns) * 3
+        # total_steps = data_manager.observed_data.shape[0]
+        with tqdm(total=total_steps, desc="MTSClean Cleaning") as pbar:
             # 先进行行约束清洗
             cleaned_data = self._clean_with_row_constraints(data_manager.observed_data, row_constraints, pbar)
             # 再进行速度约束清洗
-            # cleaned_data = self._clean_with_speed_constraints(cleaned_data, speed_constraints, pbar)
+            for _ in range(3):
+                cleaned_data = self._clean_with_speed_constraints(cleaned_data, speed_constraints, pbar)
 
         return cleaned_data
 
@@ -140,6 +157,10 @@ class MTSClean(BaseCleaningAlgorithm):
 
         for row_idx in range(n_rows):
             row = data.iloc[row_idx, :]
+
+            if not self._check_row_violations(row, constraints):
+                pbar.update(1)  # 更新进度条
+                continue
 
             c = np.hstack([np.ones(n_cols), np.ones(n_cols)])
             A_ub = []
@@ -164,29 +185,36 @@ class MTSClean(BaseCleaningAlgorithm):
         return pd.DataFrame(cleaned_data, columns=data.columns)
 
     def _clean_with_speed_constraints(self, data, speed_constraints, pbar):
+        """
+        使用速度约束对数据进行清洗。
+
+        :param data: DataFrame, 观测数据
+        :param speed_constraints: dict, 速度约束
+        :param pbar: tqdm, 进度条对象
+        :return: DataFrame, 清洗后的数据
+        """
+        w = 10  # 窗口长度，您可以根据需要调整这个值
         cleaned_data = data.copy()
 
-        w = 10  # 窗口长度，您可以根据需要调整这个值
-
-        for col in data.columns:
+        for col in cleaned_data.columns:
             speed_lb, speed_ub = speed_constraints[col]
+            data_col = data[col].values
 
-            for i in range(1, len(data[col]) - 1):
-                x_i_min = data[col].iloc[i - 1] + speed_lb
-                x_i_max = data[col].iloc[i - 1] + speed_ub
-
-                candidates = [data[col].iloc[i]]
-                for k in range(i + 1, min(i + w + 1, len(data[col]))):
-                    candidates.append(data[col].iloc[k - 1] + speed_lb)
-                    candidates.append(data[col].iloc[k - 1] + speed_ub)
-
-                x_i_mid = np.median(candidates)
+            for i in range(1, len(data_col) - 1):
+                x_i_min = speed_lb + data_col[i - 1]
+                x_i_max = speed_ub + data_col[i - 1]
+                candidate_i = [data_col[i]]
+                for k in range(i + 1, min(i + w + 1, len(data_col))):
+                    candidate_i.append(speed_lb + data_col[k - 1])
+                    candidate_i.append(speed_ub + data_col[k - 1])
+                candidate_i = np.array(candidate_i)
+                x_i_mid = np.median(candidate_i)
                 if x_i_mid < x_i_min:
                     cleaned_data.at[i, col] = x_i_min
                 elif x_i_mid > x_i_max:
                     cleaned_data.at[i, col] = x_i_max
 
-            pbar.update(len(data[col]))  # 更新进度条
+                pbar.update(1)  # 更新进度条
 
         return cleaned_data
 
@@ -369,8 +397,8 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
 
         # 使用进程池进行并行计算
         with Pool() as pool:
-            tasks = [(row, row_constraints, speed_constraints) for _, row in data_manager.observed_data.iterrows()]
-            results = list(tqdm(pool.imap(self._optimize_row, tasks), total=len(tasks), desc="Cleaning"))
+            tasks = [(row, row_constraints, speed_constraints) for row in data_manager.observed_data.to_numpy()]
+            results = list(tqdm(pool.imap(self._optimize_row, tasks), total=len(tasks), desc="MTSClean-Soft Cleaning"))
 
         # 将并行计算的结果合并到一个DataFrame中
         cleaned_data = pd.DataFrame(results, index=data_manager.observed_data.index,
@@ -380,22 +408,23 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
     def _optimize_row(self, task):
         row, row_constraints, speed_constraints = task
 
+        # 注意：此处row是ndarray，直接使用即可
         def check_violations(x):
             violations = []
             for i, (_, coefs, rho_min, rho_max) in enumerate(row_constraints):
                 value = np.dot(coefs, x)
                 if value < rho_min:
-                    violations.append((i, 'min'))  # 记录违反下界的约束
+                    violations.append((i, 'min'))
                 elif value > rho_max:
-                    violations.append((i, 'max'))  # 记录违反上界的约束
+                    violations.append((i, 'max'))
             return violations
 
         # 获取违反的约束
-        violations = check_violations(row.values)
+        violations = check_violations(row)  # 直接传递row（ndarray）
 
         # 如果没有违反的约束，直接返回原始行数据
         if not violations:
-            return row.values
+            return row
 
         def objective_function(x):
             score = 0
@@ -417,20 +446,20 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
                     score += 1.0 * violation_min + 1.0 * violation_max
 
             # 计算x与原始行数据row的距离
-            distance = np.sum(0.001 * np.abs(x - row.values))
+            distance = np.sum(0.001 * np.abs(x - row))
             score += sigmoid(distance)  # 使用sigmoid函数处理距离
 
             return score
 
         # 初始化搜索的起点为原始观测值
-        initial_guess = row.values
+        initial_guess = row
 
         # 使用优化算法寻找最佳清洗值
-        result = minimize(objective_function, initial_guess, method='L-BFGS-B')
+        result = minimize(objective_function, initial_guess, method='L-BFGS-B', options={'maxiter': 100, 'tol': 1e-6})
         if result.success:
             return result.x
         else:
-            return row.values  # 优化失败时返回原始观测值
+            return row  # 优化失败时返回原始观测值
 
     @staticmethod
     def test_MTSCleanSoft():

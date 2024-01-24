@@ -140,14 +140,14 @@ class MTSClean(BaseCleaningAlgorithm):
             raise ValueError("Speed constraints are required for secondary cleaning.")
 
         # 计算总的迭代次数
-        total_steps = data_manager.observed_data.shape[0] + data_manager.observed_data.shape[0] * len(data_manager.observed_data.columns) * 3
+        total_steps = data_manager.observed_data.shape[0] * 5 + data_manager.observed_data.shape[0] * len(data_manager.observed_data.columns)
         # total_steps = data_manager.observed_data.shape[0]
         with tqdm(total=total_steps, desc="MTSClean Cleaning") as pbar:
             # 先进行行约束清洗
-            cleaned_data = self._clean_with_row_constraints(data_manager.observed_data, row_constraints, pbar)
+            for _ in range(4):
+                cleaned_data = self._clean_with_row_constraints(data_manager.observed_data, row_constraints, pbar)
             # 再进行速度约束清洗
-            for _ in range(3):
-                cleaned_data = self._clean_with_speed_constraints(cleaned_data, speed_constraints, pbar)
+            cleaned_data = self._clean_with_speed_constraints(cleaned_data, speed_constraints, pbar)
 
         return cleaned_data
 
@@ -158,9 +158,9 @@ class MTSClean(BaseCleaningAlgorithm):
         for row_idx in range(n_rows):
             row = data.iloc[row_idx, :]
 
-            if not self._check_row_violations(row, constraints):
-                pbar.update(1)  # 更新进度条
-                continue
+            # if not self._check_row_violations(row, constraints):
+            #     pbar.update(1)  # 更新进度条
+            #     continue
 
             c = np.hstack([np.ones(n_cols), np.ones(n_cols)])
             A_ub = []

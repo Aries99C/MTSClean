@@ -319,9 +319,6 @@ def evaluate_cleaning_algorithms_by_segment_length(data_manager):
     col_miner = ColConstraintMiner(data_manager.clean_data)
     speed_constraints, accel_constraints = col_miner.mine_col_constraints()
 
-    # 注入错误到观测数据中
-    data_manager.inject_errors(error_ratio=0.25, error_types=['drift'], covered_attrs=covered_attrs)
-
     # 为 KalmanFilterClean 估计参数
     kalman_params = data_manager.estimate_kalman_parameters()
 
@@ -341,8 +338,8 @@ def evaluate_cleaning_algorithms_by_segment_length(data_manager):
     }
 
     # 分段长度比例
-    # segment_ratios = [1 / 5, 2 / 5, 3 / 5, 4 / 5, 1]
-    segment_ratios = [1 / 5]
+    segment_ratios = [1 / 5, 2 / 5, 3 / 5, 4 / 5, 1]
+    # segment_ratios = [1 / 5]
 
     # 为每个算法和每个指标初始化字典
     error_by_algorithm = {name: [] for name in algorithms.keys()}
@@ -357,6 +354,9 @@ def evaluate_cleaning_algorithms_by_segment_length(data_manager):
         dm_copy.observed_data = dm_copy.observed_data.iloc[:segment_length]
         dm_copy.clean_data = dm_copy.clean_data.iloc[:segment_length]
         dm_copy.error_mask = dm_copy.error_mask.iloc[:segment_length]
+
+        # 在每次迭代中注入错误
+        dm_copy.inject_errors(error_ratio=0.25, error_types=['drift'], covered_attrs=covered_attrs)
 
         for name, algo in algorithms.items():
             start_time = time.time()
@@ -390,12 +390,35 @@ def evaluate_cleaning_algorithms_by_segment_length(data_manager):
 
 
 def plot_histograms(data, ratios, title, dataset_name):
+    """
+    为不同算法的指标绘制直方图。
+
+    :param data: dict, 各算法的指标数据
+    :param ratios: list, 数据段长度比例列表
+    :param title: str, 图表标题
+    :param dataset_name: str, 数据集名称
+    """
+    n_ratios = len(ratios)
+    n_algorithms = len(data)
+    bar_width = 1 / (n_algorithms + 1)  # 计算每个条形的宽度
+
     plt.figure(figsize=(12, 6))
-    for name, values in data.items():
-        plt.plot(ratios, values, marker='o', label=name)
+
+    # 为每个算法和每个比例绘制条形
+    for i, (name, values) in enumerate(data.items()):
+        # 计算每个条形的位置
+        positions = np.arange(n_ratios) + bar_width * i
+
+        plt.bar(positions, values, width=bar_width, label=name)
+
+    # 设置图表的标题和标签
     plt.title(f'{title} for Different Algorithms on {dataset_name}')
     plt.xlabel('Segment Length Ratio')
     plt.ylabel(title)
+
+    # 设置x轴刻度标签
+    plt.xticks(np.arange(n_ratios) + bar_width * (n_algorithms / 2), ratios)
+
     plt.legend()
     plt.show()
 
@@ -413,13 +436,12 @@ def save_results_to_csv(data, segment_ratios, filename):
 
 
 if __name__ == '__main__':
+    # pump实验
     # 指定数据集的路径
-    data_path = '../datasets/idf.csv'
-    # data_path = '../datasets/SWaT.csv'
+    data_path = '../datasets/pump.csv'
 
     # 创建 DataManager 实例
-    data_manager = DataManager(dataset='idf', dataset_path=data_path)
-    # data_manager = DataManager(dataset='SWaT', dataset_path=data_path)
+    data_manager = DataManager(dataset='pump', dataset_path=data_path)
 
     # 随机标记一定比例的数据为需要清洗的数据
     data_manager.randomly_label_data(0.05)
@@ -429,3 +451,5 @@ if __name__ == '__main__':
 
     # 调用新的函数
     evaluate_cleaning_algorithms_by_segment_length(data_manager)
+
+

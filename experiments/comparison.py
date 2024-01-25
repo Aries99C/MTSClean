@@ -324,22 +324,21 @@ def evaluate_cleaning_algorithms_by_segment_length(data_manager):
 
     # 定义清洗算法
     algorithms = {
-        # 'MTSCleanRow': MTSCleanRow(),
         'MTSClean': MTSClean(),
         'MTSCleanSoft': MTSCleanSoft(),
-        'LocalSpeedClean': LocalSpeedClean(),
-        'GlobalSpeedClean': GlobalSpeedClean(),
-        'LocalSpeedAccelClean': LocalSpeedAccelClean(),
-        'GlobalSpeedAccelClean': GlobalSpeedAccelClean(),
-        'EWMAClean': EWMAClean(),
-        'MedianFilterClean': MedianFilterClean(),
-        'KalmanFilterClean': KalmanFilterClean(*kalman_params),
-        'IMRClean': IMRClean()
+        # 'LocalSpeedClean': LocalSpeedClean(),
+        # 'GlobalSpeedClean': GlobalSpeedClean(),
+        # 'LocalSpeedAccelClean': LocalSpeedAccelClean(),
+        # 'GlobalSpeedAccelClean': GlobalSpeedAccelClean(),
+        # 'EWMAClean': EWMAClean(),
+        # 'MedianFilterClean': MedianFilterClean(),
+        # 'KalmanFilterClean': KalmanFilterClean(*kalman_params),
+        # 'IMRClean': IMRClean()
     }
 
     # 分段长度比例
-    segment_ratios = [1 / 5, 2 / 5, 3 / 5, 4 / 5, 1]
-    # segment_ratios = [1 / 5]
+    # segment_ratios = [1 / 5, 2 / 5, 3 / 5, 4 / 5, 1]
+    segment_ratios = [1 / 5]
 
     # 为每个算法和每个指标初始化字典
     error_by_algorithm = {name: [] for name in algorithms.keys()}
@@ -438,10 +437,10 @@ def save_results_to_csv(data, segment_ratios, filename):
 if __name__ == '__main__':
     # pump实验
     # 指定数据集的路径
-    data_path = '../datasets/pump.csv'
+    data_path = '../datasets/idf.csv'
 
     # 创建 DataManager 实例
-    data_manager = DataManager(dataset='pump', dataset_path=data_path)
+    data_manager = DataManager(dataset='test', dataset_path=data_path)
 
     # 随机标记一定比例的数据为需要清洗的数据
     data_manager.randomly_label_data(0.05)

@@ -326,19 +326,19 @@ def evaluate_cleaning_algorithms_by_segment_length(data_manager):
     algorithms = {
         'MTSClean': MTSClean(),
         'MTSCleanSoft': MTSCleanSoft(),
-        # 'LocalSpeedClean': LocalSpeedClean(),
-        # 'GlobalSpeedClean': GlobalSpeedClean(),
-        # 'LocalSpeedAccelClean': LocalSpeedAccelClean(),
-        # 'GlobalSpeedAccelClean': GlobalSpeedAccelClean(),
-        # 'EWMAClean': EWMAClean(),
-        # 'MedianFilterClean': MedianFilterClean(),
-        # 'KalmanFilterClean': KalmanFilterClean(*kalman_params),
-        # 'IMRClean': IMRClean()
+        'LocalSpeedClean': LocalSpeedClean(),
+        'GlobalSpeedClean': GlobalSpeedClean(),
+        'LocalSpeedAccelClean': LocalSpeedAccelClean(),
+        'GlobalSpeedAccelClean': GlobalSpeedAccelClean(),
+        'EWMAClean': EWMAClean(),
+        'MedianFilterClean': MedianFilterClean(),
+        'KalmanFilterClean': KalmanFilterClean(*kalman_params),
+        'IMRClean': IMRClean()
     }
 
     # 分段长度比例
-    # segment_ratios = [1 / 5, 2 / 5, 3 / 5, 4 / 5, 1]
-    segment_ratios = [1 / 5]
+    segment_ratios = [1 / 5, 2 / 5, 3 / 5, 4 / 5, 1]
+    # segment_ratios = [1 / 5]
 
     # 为每个算法和每个指标初始化字典
     error_by_algorithm = {name: [] for name in algorithms.keys()}
@@ -388,6 +388,82 @@ def evaluate_cleaning_algorithms_by_segment_length(data_manager):
     save_results_to_csv(violation_ratio_by_algorithm, segment_ratios, f'{data_manager.dataset}_violation_ratio_by_segment_length.csv')
 
 
+def evaluate_cleaning_algorithms_by_error_ratio(data_manager):
+    # 挖掘行约束和速度/加速度约束
+    row_miner = RowConstraintMiner(data_manager.clean_data)
+    row_constraints, covered_attrs = row_miner.mine_row_constraints()
+
+    col_miner = ColConstraintMiner(data_manager.clean_data)
+    speed_constraints, accel_constraints = col_miner.mine_col_constraints()
+
+    # 为 KalmanFilterClean 估计参数
+    kalman_params = data_manager.estimate_kalman_parameters()
+
+    # 定义清洗算法
+    algorithms = {
+        'MTSClean': MTSClean(),
+        'MTSCleanSoft': MTSCleanSoft(),
+        'LocalSpeedClean': LocalSpeedClean(),
+        'GlobalSpeedClean': GlobalSpeedClean(),
+        'LocalSpeedAccelClean': LocalSpeedAccelClean(),
+        'GlobalSpeedAccelClean': GlobalSpeedAccelClean(),
+        'EWMAClean': EWMAClean(),
+        'MedianFilterClean': MedianFilterClean(),
+        'KalmanFilterClean': KalmanFilterClean(*kalman_params),
+        'IMRClean': IMRClean()
+    }
+
+    # 错误注入比例
+    error_ratios = [0.1, 0.2, 0.3, 0.4, 0.5]
+
+    # 为每个算法和每个指标初始化字典
+    error_by_algorithm = {name: [] for name in algorithms.keys()}
+    rra_by_algorithm = {name: [] for name in algorithms.keys()}
+    f1_by_algorithm = {name: [] for name in algorithms.keys()}
+    runtime_by_algorithm = {name: [] for name in algorithms.keys()}
+    violation_ratio_by_algorithm = {name: [] for name in algorithms.keys()}
+
+    for error_ratio in error_ratios:
+        dm_copy = copy.deepcopy(data_manager)
+
+        dm_copy.observed_data = dm_copy.observed_data.iloc[:4000]
+        dm_copy.clean_data = dm_copy.clean_data.iloc[:4000]
+        dm_copy.error_mask = dm_copy.error_mask.iloc[:4000]
+
+        # 在每次迭代中注入错误
+        dm_copy.inject_errors(error_ratio=error_ratio, error_types=['drift'], covered_attrs=covered_attrs)
+
+        for name, algo in algorithms.items():
+            start_time = time.time()
+            cleaned_data = algo.clean(dm_copy, row_constraints=row_constraints, speed_constraints=speed_constraints, accel_constraints=accel_constraints)
+            runtime = time.time() - start_time
+
+            error = calculate_error_segment_difference(cleaned_data, dm_copy.clean_data, dm_copy.error_mask)
+            rra = calculate_rra(cleaned_data, dm_copy.observed_data, dm_copy.clean_data, dm_copy.error_mask)
+            f1 = calculate_f1_score(cleaned_data, dm_copy.observed_data, dm_copy.error_mask)
+            violation_ratio = calculate_constraint_violation_ratio(cleaned_data, dm_copy.observed_data, row_constraints)
+
+            error_by_algorithm[name].append(error)
+            rra_by_algorithm[name].append(rra)
+            f1_by_algorithm[name].append(f1)
+            runtime_by_algorithm[name].append(runtime)
+            violation_ratio_by_algorithm[name].append(violation_ratio)
+
+    # 为每个指标绘制直方图
+    plot_histograms(error_by_algorithm, error_ratios, 'L1 Error', data_manager.dataset)
+    plot_histograms(rra_by_algorithm, error_ratios, 'Relative Repair Accuracy', data_manager.dataset)
+    plot_histograms(f1_by_algorithm, error_ratios, 'F1 Score', data_manager.dataset)
+    plot_histograms(runtime_by_algorithm, error_ratios, 'Runtime', data_manager.dataset)
+    plot_histograms(violation_ratio_by_algorithm, error_ratios, 'Constraint Violation Ratio', data_manager.dataset)
+
+    # 保存结果到CSV文件
+    save_results_to_csv(error_by_algorithm, error_ratios, f'{data_manager.dataset}_l1_by_error_ratio.csv')
+    save_results_to_csv(rra_by_algorithm, error_ratios, f'{data_manager.dataset}_rra_by_error_ratio.csv')
+    save_results_to_csv(f1_by_algorithm, error_ratios, f'{data_manager.dataset}_f1_by_error_ratio.csv')
+    save_results_to_csv(runtime_by_algorithm, error_ratios, f'{data_manager.dataset}_runtime_by_error_ratio.csv')
+    save_results_to_csv(violation_ratio_by_algorithm, error_ratios, f'{data_manager.dataset}_violation_ratio_by_error_ratio.csv')
+
+
 def plot_histograms(data, ratios, title, dataset_name):
     """
     为不同算法的指标绘制直方图。
@@ -435,12 +511,11 @@ def save_results_to_csv(data, segment_ratios, filename):
 
 
 if __name__ == '__main__':
-    # pump实验
     # 指定数据集的路径
     data_path = '../datasets/idf.csv'
 
     # 创建 DataManager 实例
-    data_manager = DataManager(dataset='test', dataset_path=data_path)
+    data_manager = DataManager(dataset='idf', dataset_path=data_path)
 
     # 随机标记一定比例的数据为需要清洗的数据
     data_manager.randomly_label_data(0.05)
@@ -449,6 +524,6 @@ if __name__ == '__main__':
     # visualize_cleaning_results(data_manager)
 
     # 调用新的函数
-    evaluate_cleaning_algorithms_by_segment_length(data_manager)
+    evaluate_cleaning_algorithms_by_error_ratio(data_manager)
 
 

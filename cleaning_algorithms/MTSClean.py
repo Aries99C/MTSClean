@@ -230,6 +230,9 @@ class MTSClean(BaseCleaningAlgorithm):
         row_miner = RowConstraintMiner(data_manager.clean_data)
         row_constraints, covered_attrs = row_miner.mine_row_constraints(attr_num=3)
 
+        for row_constraint in row_constraints:
+            print(row_constraint[0])
+
         # 使用 ColConstraintMiner 从 clean_data 中挖掘速度约束
         col_miner = ColConstraintMiner(data_manager.clean_data)
         speed_constraints, _ = col_miner.mine_col_constraints()
@@ -507,6 +510,6 @@ class MTSCleanSoft(BaseCleaningAlgorithm):
 # 在适当的时候调用测试函数
 if __name__ == "__main__":
     # MTSCleanRow.test_MTSCleanRow()
-    # MTSClean.test_MTSClean()
+    MTSClean.test_MTSClean()
     # MTSCleanPareto.test_MTSCleanPareto()
-    MTSCleanSoft.test_MTSCleanSoft()
+    # MTSCleanSoft.test_MTSCleanSoft()

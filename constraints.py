@@ -54,7 +54,7 @@ class RowConstraintMiner:
         selected_models = []
         for binary_string, y_column, model, loss in models_with_loss:
             # 检查模型的平均绝对误差是否在阈值以下
-            if loss > 0.05:
+            if loss > 5:
                 continue
 
             # 确定当前模型涉及的属性

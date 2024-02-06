@@ -512,10 +512,10 @@ def save_results_to_csv(data, segment_ratios, filename):
 
 if __name__ == '__main__':
     # 指定数据集的路径
-    data_path = '../datasets/SWaT.csv'
+    data_path = '../datasets/idf.csv'
 
     # 创建 DataManager 实例
-    data_manager = DataManager(dataset='test', dataset_path=data_path)
+    data_manager = DataManager(dataset='idf', dataset_path=data_path)
 
     # 随机标记一定比例的数据为需要清洗的数据
     data_manager.randomly_label_data(0.05)

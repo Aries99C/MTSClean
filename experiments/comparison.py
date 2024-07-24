@@ -521,7 +521,7 @@ if __name__ == '__main__':
     data_manager.randomly_label_data(0.05)
 
     # 调用可视化清洗结果对比的函数
-    # visualize_cleaning_results(data_manager)
+    visualize_cleaning_results(data_manager)
 
     # 调用新的函数
     evaluate_cleaning_algorithms_by_segment_length(data_manager)

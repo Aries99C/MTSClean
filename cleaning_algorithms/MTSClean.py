@@ -10,7 +10,7 @@ from scipy.optimize import linprog
 from scipy.optimize import minimize
 import random
 from deap import base, creator, tools, algorithms
-import geatpy as ea
+# import geatpy as ea
 from tqdm import tqdm
 from multiprocessing import Pool
 
